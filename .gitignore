@@ -1,0 +1,14 @@
+# node_modules
+**/node_modules/
+
+# Next.js のビルドフォルダ（これが今大量に出ています）
+**/.next/
+
+# Python のキャッシュ（これも出ています）
+**/__pycache__/
+
+# 録音した音声などのゴミ
+**/received_audio.wav
+
+# 環境変数（セキュリティのため）
+**/.env*
