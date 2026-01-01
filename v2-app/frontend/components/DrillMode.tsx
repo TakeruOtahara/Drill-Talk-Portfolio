@@ -28,7 +28,7 @@ export default function DrillMode({ history }: Props) {
     formData.append("c", history || "会話履歴なし"); 
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/execute_drill", {
+      const res = await fetch("http://127.0.0.1:8000/run-drill", {
         method: "POST",
         body: formData,
       });
