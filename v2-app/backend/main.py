@@ -47,17 +47,18 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             data = await websocket.receive_bytes()
             # AI思考 & 音声合成
-            response_text = ai.generate_response(user_input=None, image=None, audio_bytes=data)
+            response_text, teacher_summary = ai.generate_response(user_input=None, image=None, audio_bytes=data)
             audio_data = await ai.text_to_speech(response_text)
             audio_base64 = base64.b64encode(audio_data).decode("utf-8") if audio_data else None
 
             # 返送
             response_json = {
                 "reply": response_text,
+                "summary": teacher_summary, 
                 "audio": audio_base64
             }
             await websocket.send_json(response_json)
-
+            
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         print("🔌 WebSocket Disconnected")

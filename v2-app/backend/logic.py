@@ -10,6 +10,7 @@ import prompts
 import asyncio
 import edge_tts
 import io
+import json
 
 class AIClient(ABC):
     # 抽象メソッド（契約）は1つに絞る！
@@ -28,7 +29,7 @@ class GeminiClient(AIClient):
         self.system_instruction_chat = prompts.SYSTEM_INSTRUCTION_CHAT
         self.system_instruction_grading = prompts.SYSTEM_INSTRUCTION_GRADING
 
-    def generate_response(self, user_input: str, image: Image.Image = None, audio_bytes: bytes = None) -> str:
+    def generate_response(self, user_input: str, image: Image.Image = None, audio_bytes: bytes = None) -> tuple[str, str]:
         
         try:
             contents = []
@@ -37,17 +38,28 @@ class GeminiClient(AIClient):
             if audio_bytes:
                 contents.append(types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"))
             if not contents: return "（...）"
+            config = types.GenerateContentConfig(
+                system_instruction=self.system_instruction_chat,
+                temperature=0.7,
+                response_mime_type="application/json"  # ★ここが重要
+            )
+
             response = self.client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=self.system_instruction_chat,
-                    temperature=0.7,
-                )
+                config=config
             )
-            return response.text
+
+            try:
+                data = json.loads(response.text)
+                reply_text = data.get("reply", "（...）")
+                summary_text = data.get("teacher_summary", "") # 要約を取得
+                return reply_text, summary_text
+            except json.JSONDecodeError:
+                # 万が一JSONが壊れていた場合の保険
+                return response.text, ""
         except Exception as e:
-            return f"[System Error] {e}"
+            return f"[System Error] {e}", ""
         
     # ▼▼▼ async を追加し、try-exceptの構造をシンプルにする ▼▼▼
     async def text_to_speech(self, text: str) -> bytes:
