@@ -1,11 +1,13 @@
-# --- main.py ---
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from dotenv import load_dotenv
 import os
 import base64
+import json
+import random
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from dotenv import load_dotenv
 from logic import GeminiProvider
+from prompts import STATIC_BACKCHANNELS
 
-load_dotenv() # .envを読み込みます
+load_dotenv()
 
 app = FastAPI()
 ai_brain = GeminiProvider()
@@ -13,41 +15,108 @@ ai_brain = GeminiProvider()
 @app.websocket("/ws/manabu")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print("【接続】フロントエンドとつながりました")
-
-    # セッション用変数
-    original_text = ""
-    themes = []
-    current_score = 0
+    
+    # --- マナブ君の記憶（ステート管理） ---
+    # 授業を跨いでも保持するもの
+    state = {
+        "original_text": "",
+        "themes": [],
+        "current_notebook": "", # 1つ前の授業で作ったノート（2回目以降のコンテキスト）
+        "lecture_history": [],  # 今回の授業での発言ログ
+        "current_score": 0,     # 今回の授業の理解度
+        "lesson_count": 1       # 何回目の授業か
+    }
 
     try:
         while True:
-            # JSON形式でデータを受け取る
-            data = await websocket.receive_json()
+            # フロントエンドからメッセージを受信
+            raw_data = await websocket.receive_text()
+            data = json.loads(raw_data)
+            data_type = data.get("type")
 
-            # ステップ1：画像の初期処理
-            if data.get("type") == "INIT_MATERIAL":
-                print("【処理中】教材画像を解析しています...")
-                
-                # Base64形式の画像データをデコードしてバイナリにします
+            # 1. 教材の初期化（初回のみ）
+            if data_type == "INIT_MATERIAL":
                 image_bytes = base64.b64decode(data["image_base64"])
+                original, themes = await ai_brain.process_initial_material(image_bytes)
                 
-                # logic.pyの機能を使って原本とテーマを作成
-                # ※ ここで「隠しキーワード」も裏側で保存されます
-                original_text, themes = await ai_brain.process_initial_material(
-                    {"mime_type": "image/jpeg", "data": image_bytes}
-                )
-
-                # ユーザーには「テーマリスト」だけを返します
+                state["original_text"] = original
+                state["themes"] = themes
+                
                 await websocket.send_json({
                     "type": "MATERIAL_READY",
-                    "themes": themes,
-                    "original_preview": original_text[:100] + "..." # 確認用
+                    "themes": themes
                 })
-                print("【完了】原本とテーマの準備ができました")
+
+            # 2. リアルタイム会話（音声認識結果が届くたびに実行）
+            elif data_type == "USER_TALK":
+                user_text = data.get("text", "")
+                state["lecture_history"].append(user_text)
+                
+                # スコア更新（API通信なしの高速処理）
+                state["current_score"] = ai_brain.calculate_score(user_text, state["current_score"])
+
+                # --- 音声トリガー「質問ある？」の検知 ---
+                if any(kw in user_text for kw in ["質問ある", "しつもんある", "わからないところある"]):
+                    # マナブ君が「ノートの（？）」や「未説明のテーマ」について質問する
+                    question = await ai_brain.generate_student_question(
+                        state["current_notebook"],
+                        state["original_text"],
+                        state["themes"]
+                    )
+                    await websocket.send_json({
+                        "type": "STUDENT_QUESTION",
+                        "message": question,
+                        "emotion": "confused"
+                    })
+                else:
+                    # 通常の相槌（ランダムに感情を込めて返す）
+                    reaction = random.choice(STATIC_BACKCHANNELS)
+                    await websocket.send_json({
+                        "type": "REACTION",
+                        "message": reaction["text"],
+                        "emotion": reaction["emotion"],
+                        "score": state["current_score"]
+                    })
+
+            # 3. 本領発揮（5分経過 or 強制終了）
+            elif data_type == "FINISH_LECTURE":
+                # 前回のノートをコンテキストとして渡し、今回の説明で「上書き」する
+                result = await ai_brain.generate_final_note(
+                    state["lecture_history"],
+                    state["original_text"],
+                    state["themes"],
+                    previous_notebook=state["current_notebook"]
+                )
+                
+                # 状態を更新（ノートを最新版にし、達成したテーマを [OK] に）
+                state["current_notebook"] = result["notebook"]
+                state["themes"] = result["themes"]
+                
+                await websocket.send_json({
+                    "type": "FINAL_NOTE",
+                    "notebook": result["notebook"],
+                    "themes": result["themes"],
+                    "score": state["current_score"]
+                })
+
+            # 4. 「もう一度教える」ボタン（リセット処理）
+            elif data_type == "RESTART_LECTURE":
+                state["lesson_count"] += 1
+                state["lecture_history"] = [] # 今回の発言ログはクリア
+                state["current_score"] = 0     # スコアも一旦リセット
+                # ※ original_text, themes, current_notebook は保持される
+                
+                await websocket.send_json({
+                    "type": "RESTARTED",
+                    "message": f"{state['lesson_count']}回目の授業ですね。よろしくお願いします！",
+                    "themes": state["themes"]
+                })
 
     except WebSocketDisconnect:
-        print("【切断】バイバイ！")
+        print("先生が退出しました。")
+    except Exception as e:
+        print(f"エラー発生: {e}")
+        await websocket.send_json({"type": "ERROR", "message": "マナブ君が混乱しています...もう一度お願いします。"})
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,0 +1,238 @@
+学習支援アプリケーション『Drill-Talk』Ver.3.0 開発計画書
+1. コンセプト：メタ認知を加速させる「AI生徒」
+「教えることは、二度学ぶこと（To teach is to learn twice）」 独学者が「分かったつもり」を解消し、知識を完全に定着させるためのアウトプット特化型プラットフォーム。AI生徒「マナブ」に教えるプロセスを通じて、自分の知識の欠落（ギャップ）を可視化する。
+2. システムアーキテクチャ
+モダンなWeb技術とリアルタイム通信、クラウドインフラを融合させたスケーラブルな構成。
+Frontend: TypeScript / Next.js (App Router)
+状態管理と滑らかなUI演出（Lottie, Framer Motion）
+Web Audio APIによる録音とWebSocket通信の制御
+Backend: Python / FastAPI
+Gemini 2.5 Flash APIを利用したマルチモーダル解析
+WebSocketによるステートフルなリアルタイム双方向通信
+Infrastructure: Microsoft Azure
+Azure Static Web Apps: フロントエンドのホスティング
+Azure App Service: バックエンド（WebSocket有効化）の実行
+Azure SQL Database / Cosmos DB: 学習ログとノートの永続化
+Azure Web PubSub (オプション): 通信のスケールアップ対応
+3. リアルタイム通信戦略 (WebSocket & Reconnection)
+「ChatGPTでは体験できない」即時性を実現するための通信スタック。
+双方向ストリーミング: ユーザーの音声解析結果（テキスト）をバックエンドへ送信し、サーバー側で算出した「理解度数値」をフロントへプッシュ。
+再接続ロジック（Resilience）:
+Exponential Backoff: 接続が切れた際、0.5s, 1s, 2s...と間隔を空けて自動再接続を試行。
+Heartbeat / Ping-Pong: 30秒ごとの生存確認により、インフラ側のタイムアウトによる切断を防止。
+State Recovery: 再接続時に「どこまで教えたか」のセッション情報を復元。
+4. プロダクト機能詳細
+① 1セッション「5分間」のマイクロレクチャー
+画像プロンプト: 教科書1枚でスタート。問題作成の手間をゼロに。
+リアルタイム・フィードバック:
+理解度メーター: WebSocket経由のデータで、マナブの脳内理解度がグイグイ変動。
+キーワード・ポップ: 重要な用語を拾うたびに、画面上にチップが浮遊。
+即時相槌: 遅延を許さない「なるほど！」等の反応はフロントエンドで即時再生。
+② マナブの「授業ノート」（差分抽出フィードバック）
+セッション終了後に提示される、AIによる客観的な評価。
+サマライズ: ユーザーの説明を整理した「マナブ君のノート」。
+「？」による指摘: 論理の飛躍や誤解を、生徒の「戸惑い」として表現。
+赤字の質問: 教材にあるが説明されなかった要素を「＿＿＿って何？」と赤字で明示。
+リテイク・ループ: ノートを元に、すぐに5分間の「教え直し」が可能。
+5. ビジネス・キャリア的価値
+技術的差別化: 汎用AIチャットとは一線を画す、特定の学習体験（UX）への最適化。
+インフラエンジニアとしての証明: Azure上でのWebSocket運用やデータベース設計を通じて、実務に近いシステム構築能力を提示。
+商用化への展望: 資格試験団体や教育機関向けに「アウトプット型eラーニング」としてのOEM展開や、専門分野特化型AI生徒のサブスクリプションモデル。
+
+
+graph TD
+    subgraph "Frontend (TypeScript / Next.js)"
+        UI[UI Components / Framer Motion]
+        Rec[Web Audio API / Recorder]
+        WS_C[WebSocket Client / Reconnection Logic]
+        Lottie[AI Animation / Lottie]
+    end
+
+    subgraph "Backend (Python / FastAPI)"
+        WS_S[WebSocket Server]
+        STT[Speech-to-Text / Whisper or Azure]
+        LLM[Gemini 2.5 Flash / Logic Engine]
+        DB_C[Database Connector]
+    end
+
+    subgraph "Infrastructure (Microsoft Azure)"
+        SWA[Azure Static Web Apps]
+        APP[Azure App Service]
+        SQL[Azure SQL Database]
+        BLOB[Azure Blob Storage]
+    end
+
+    UI <--> WS_C
+    WS_C <--> WS_S
+    WS_S <--> LLM
+    WS_S <--> STT
+    WS_S <--> DB_C
+    DB_C <--> SQL
+    SWA --- UI
+    APP --- WS_S
+
+コンポーネント詳細
+フロントエンド (TypeScript / Next.js)
+Next.js (App Router): 高速なページ遷移とSEO（将来の商用化）を考慮。
+WebSocket Client: サーバーとの接続を維持し、onMessage で受け取った理解度（0〜100）をリアルタイムで反映。
+再接続ロジック: 指数バックオフアルゴリズムを用いた自動リトライ機能を搭載。
+Framer Motion / Lottie: 理解度メーターのグイーンという動きや、マナブ君の「？」「💡」といったアニメーションを制御。
+バックエンド (Python / FastAPI)
+WebSocket Endpoint: 接続を維持し、非同期でGeminiと通信。
+Processing Loop: 1. ユーザーの音声をテキスト化（STT）。
+2. 定期的に（例：10秒ごと）**「教材画像 ＋ 累積テキスト」**をGeminiに投げる。
+3. Geminiから「現在の理解度・抽出キーワード」をJSONで受け取り、フロントへプッシュ。
+Finalizer: 5分終了時に「教材画像 vs 全テキスト」の差分分析（Gap Analysis）を実行し、ノートを生成。
+インフラ (Azure)
+App Service: WebSocketをサポートしており、Pythonの実行環境として最適。
+Static Web Apps: Next.jsをビルド・ホスト。GitHub Actionsと連携してCI/CDを構築（就活での高評価ポイント）。
+SQL Database: ユーザーごとの「授業ノート（テキストデータ）」を保存。
+
+3. データ構造 (Database Schema)
+学習ログを資産化するための最小限のテーブル設計です。
+テーブル名
+カラム
+説明
+Users
+user_id, email, name
+ユーザー情報
+Sessions
+session_id, user_id, image_url, created_at
+1回のレクチャー（5分）の単位
+Notes
+note_id, session_id, summary, gaps, score
+AIが生成した最終的な授業ノート
+Keywords
+keyword_id, session_id, word
+拾い上げた重要単語のリスト
+
+4. リアルタイム・シーケンス
+セッション中のデータの流れは以下のようになります。
+接続: フロントからWS接続開始（認証トークン含む）。
+ストリーミング: フロントから音声データ（または逐次テキスト）を送信。
+解析: バックエンドでGemini 2.5 Flashを叩く。
+Prompt: 「この画像とこの発言を比較して、理解度を0-100で数値化して」
+プッシュ: バックエンドから { "score": 75, "found_keyword": "比熱" } を送信。
+描画: フロントでメーターが動き、キーワードチップが跳ねる。
+完了: ユーザーが停止、または5分経過で「最終評価プロンプト」へ。
+
+5. この設計の「ドヤ顔」ポイント
+「ステートフル通信の制御」: WebSocketの切断対策（Heartbeat）まで考慮した設計は、実務レベルの考慮ができている証拠です。
+「マルチモーダルRAGの簡易版」: 教材画像という「外部知識」と発言をリアルタイムで照合するロジックは、非常に技術トレンドに沿っています。
+「Azureネイティブ」: 富士通やMicrosoft Japanが好むAzure環境でのフルスタック構成。
+
+# Drill-Talk Ver.3.0 開発ログ
+## [2026-03-01] バックエンド：WebSocket基盤の実装
+### やったこと
+- FastAPI を使用した WebSocket エンドポイント `/ws/manabu` の作成。
+- クライアントからのメッセージに対する JSON 形式のレスポンス機能を実装。
+- 接続維持のための例外処理（WebSocketDisconnect）を追加。
+
+### 技術的なポイント
+- リアルタイム性を確保するため、HTTP ではなく双方向通信が可能な WebSocket を選択。
+- フロントエンドとのデータ受け渡しをスムーズにするため、レスポンスを JSON 形式に統一。
+
+## [2026-03-01] 設計の最適化：プロンプトの分離
+### やったこと
+- `prompts.py` を作成し、AIのキャラクター設定とレスポンスのテンプレートを分離。
+- `random` モジュールを使用して、マナブ君の相槌にバリエーションを追加。
+
+### なぜこの設計にしたか
+- ロジック（サーバー動作）とコンテンツ（AIの性格）を分けることで、メンテナンス性を向上させるため。
+- 毎回同じ返答だと「機械感」が出てしまうため、ランダム性を持たせてリアルな生徒感を演出した。
+
+### トラブルシューティング
+- `python main.py` 実行時に出力がなく即終了する現象が発生。
+- 対策：`uvicorn main:app --reload` コマンドによるデバッグを試行。
+- 原因切り分けのため、ファイル冒頭に print 文を挿入して実行確認。
+
+### トラブルシューティング
+- `ImportError: cannot import name 'SYSTEM_PROMPT'` が発生。
+- 原因：`prompts.py` 内の変数名と `main.py` でのインポート名が一致していない、もしくはファイルの保存漏れ。
+- 対策：`prompts.py` の変数名を再確認し、ファイルを保存した上で `uvicorn` を再起動して解決。
+
+## [2026-03-01] 音声演出戦略の決定：プリセット・オーディオ方式
+### 課題
+- リアルタイム性を重視しつつ、マナブ君の感情表現（抑揚）を豊かにしたい。
+- 毎回音声合成 API を叩くと、コスト増大とレイテンシ（遅延）によりユーザー体験が損なわれる。
+
+### 解決策
+- 各感情（喜・驚・困）ごとに複数の高品質音声ファイルを事前に生成し、フロントエンドに配置。
+- バックエンドから送られる理解度スコアに基づき、フロント側で適切な感情の音声を即時再生する。
+
+### メリット
+- 通信待機時間ゼロ（0ms）でのレスポンスを実現。
+- API 実行コストを完全にカット。
+- 棒読み感を排除し、コミカルで「生きている」キャラクター性を演出。
+
+一旦リセットした。
+ PS C:\Users\test\Desktop\Drill-Talk-Portfolio\v3-app\backend> python main.py
+C:\Users\test\Desktop\Drill-Talk-Portfolio\v3-app\backend\main.py:3: FutureWarning: 
+
+All support for the `google.generativeai` package has ended. It will no longer be receiving
+updates or bug fixes. Please switch to the `google.genai` package as soon as possible.
+See README for more details:
+
+https://github.com/google-gemini/deprecated-generative-ai-python/blob/main/README.md
+
+  import google.generativeai as genai
+
+  バージョンが古いため入れ直した。AIの情報は古い場合があることが分かった。
+  ### [2026-03-02] ライブラリのアップグレード
+- `google-generativeai` (非推奨) から `google-genai` (最新SDK) へ移行。
+- `genai.Client` を使用した最新の呼び出し形式にリファクタリング。
+- モデルを `gemini-2.0-flash` に指定し、レスポンスの高速化を期待。
+
+### [2026-03-02] 設計変更：APIリクエストのバッチ化（結合）
+- 課題：Gemini 2.0 Flash の無料枠における短時間連続リクエスト制限（429 Error）を回避する必要があった。
+- 解決策：OCR、テーマ抽出、キーワード生成の3工程を単一のプロンプトに統合。
+- 技術的アプローチ：JSON Mode (`response_mime_type='application/json'`) を採用し、1回のリクエストで構造化データを受け取るように変更。
+- メリット：API消費量を1/3に削減し、レスポンスの安定性を向上させた。
+
+### [2026-03-02] モデル・マイグレーション
+- モデルを `gemini-2.0-flash` から **`gemini-2.5-flash`** へ正式にアップグレード。
+- 以前の 429 エラーは旧モデル (2.0) のクォータ制限によるものと特定。
+- 2.5 Flash の JSON Mode を利用し、リクエストの効率化を維持。
+レスポンスの高速化（通信回数の削減）。
+JSON出力による原本と抽出項目の整合性向上。
+
+PS C:\Users\test\Desktop\Drill-Talk-Portfolio\v3-app\backend> python test_backend.py
+--- マナブ君、起動中... ---
+--- 'test_material.jpeg' を解析しています... ---
+
+=== 【原本】一言一句テキスト（冒頭200文字） ===
+3 適応免疫 ー適応免疫ではどのようなしくみで異物を排除するのか？
+自然免疫だけで排除しきれなかった異物に対しては, その異物を特異的に排除する適応免疫(獲得免疫)がはたらく。適応免疫ではどのように異物を認識し, 排除するのだろうか。
+A リンパ球の特異性と多様性 適応免疫では, おもに白血球の一種であるリンパ球のうち, T細胞とB細胞がはたらく。自然免疫ではたらく食細胞は, さまざ まな異物を認識...
+
+=== 【テーマ】ユーザーに見せる目次 ===
+[?] 適応免疫と獲得免疫の基本概念
+[?] リンパ球の特異性と多様性のメカニズム
+[?] 免疫寛容の働きと自己免疫疾患の予防
+[?] T細胞とB細胞の役割と自然免疫との連携
+
+=== 【隠しキーワード】スコア判定用 ===
+['適応免疫', '獲得免疫', '自然免疫', '異物', '特異的', 'リンパ球', 'T細胞', 'B細胞', '食細胞', '特異性', '多様性', 'リンパ節', '免疫寛容', '受容体', '自分自身の成分']
+
+==============================
+【テスト】擬似授業スタート！
+==============================
+
+先生：『今日は適応免疫について解説します。』
+マナブ：「へぇー、そうなんですね！」 (感情: happy)
+現在の理解度スコア: 5%
+
+先生：『まず、白血球の一種であるリンパ球が重要です。』
+マナブ：「なるほど！」 (感情: happy)
+現在の理解度スコア: 10%
+
+先生：『リンパ球にはT細胞とB細胞という種類がありますね。』
+マナブ：「わかってきましたよ！」 (感情: excited)
+現在の理解度スコア: 25%
+
+先生：『これらは非常に特異性が高いのが特徴です。』
+マナブ：「それってどういうことですか？」 (感情: confused)
+現在の理解度スコア: 30%
+
+--- テスト終了 ---
+
