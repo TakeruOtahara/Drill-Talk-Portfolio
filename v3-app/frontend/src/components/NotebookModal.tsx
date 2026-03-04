@@ -1,11 +1,13 @@
 import { motion } from "framer-motion";
+import { Loader2 } from "lucide-react"; // アイコンを追加
 
 interface NotebookModalProps {
   notebook: string;
   onRestart: () => void;
+  isRestarting?: boolean; // 読み込み状態を受け取るための追加
 }
 
-export const NotebookModal = ({ notebook, onRestart }: NotebookModalProps) => {
+export const NotebookModal = ({ notebook, onRestart, isRestarting }: NotebookModalProps) => {
   if (!notebook) return null;
 
   return (
@@ -33,9 +35,11 @@ export const NotebookModal = ({ notebook, onRestart }: NotebookModalProps) => {
         <div className="mt-12 flex justify-center">
           <button
             onClick={onRestart}
-            className="px-10 py-4 bg-blue-600 text-white rounded-full font-bold shadow-lg hover:bg-blue-700 transition-all hover:scale-105"
+            disabled={isRestarting}
+            className="px-10 py-4 bg-blue-600 text-white rounded-full font-bold shadow-lg hover:bg-blue-700 transition-all hover:scale-105 flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
           >
-            もう一度教える（2回目スタート）
+            {isRestarting && <Loader2 className="w-5 h-5 animate-spin" />}
+            {isRestarting ? "準備中..." : "もう一度教える（2回目スタート）"}
           </button>
         </div>
       </motion.div>

@@ -25,7 +25,10 @@ export default function Classroom({ onHistoryUpdate, onClassFinished, onReset }:
   const { isConnected, sendAudioData } = useDrillSocket((data) => {
     setAiStatus("Speaking...");
     setAiReply(data.reply);
-    onHistoryUpdate(`Teacher: (Voice)\nStudent: ${data.reply}`);
+    // ★修正: サーバーから summary が送られてきたら、それを履歴に残す
+    // summaryが空（挨拶など）の場合は、とりあえず "(Voice)" としておくか、何も残さない
+    const teacherText = (data as any).summary ? (data as any).summary : "(Voice)";
+    onHistoryUpdate(`Teacher: ${teacherText}\nStudent: ${data.reply}`);
 
     if (data.audio) {
       // ★修正: すでに鳴っている声があれば止める

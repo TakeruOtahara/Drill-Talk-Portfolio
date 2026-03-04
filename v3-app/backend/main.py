@@ -55,9 +55,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 # スコア更新（API通信なしの高速処理）
                 state["current_score"] = ai_brain.calculate_score(user_text, state["current_score"])
 
-                # --- 音声トリガー「質問ある？」の検知 ---
+                # --- 修正：相槌ロジック ---
+                # 1. 「質問ある？」系は最優先（100%反応）
                 if any(kw in user_text for kw in ["質問ある", "しつもんある", "わからないところある"]):
-                    # マナブ君が「ノートの（？）」や「未説明のテーマ」について質問する
                     question = await ai_brain.generate_student_question(
                         state["current_notebook"],
                         state["original_text"],
@@ -68,8 +68,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         "message": question,
                         "emotion": "confused"
                     })
-                else:
-                    # 通常の相槌（ランダムに感情を込めて返す）
+                
+                # 2. 通常の相槌は「3回に1回」程度に減らす（確率は好みで調整）
+                elif random.random() < 0.3: 
                     reaction = random.choice(STATIC_BACKCHANNELS)
                     await websocket.send_json({
                         "type": "REACTION",
@@ -77,6 +78,10 @@ async def websocket_endpoint(websocket: WebSocket):
                         "emotion": reaction["emotion"],
                         "score": state["current_score"]
                     })
+                
+                # 3. それ以外（70%の確率）は何もしない
+                else:
+                    pass
 
             # 3. 本領発揮（5分経過 or 強制終了）
             elif data_type == "FINISH_LECTURE":

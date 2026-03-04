@@ -1,13 +1,15 @@
-// --- v3-app/frontend/src/hooks/useSpeechSynthesis.ts ---
 import { useCallback } from 'react';
 
-// ここに "export" がついていることを確認してください！
 export const useSpeechSynthesis = () => {
+  const cancel = useCallback(() => {
+    if (typeof window !== 'undefined') {
+      window.speechSynthesis.cancel();
+    }
+  }, []);
+
   const speak = useCallback((text: string) => {
     if (typeof window === 'undefined') return;
-
-    // 前の音声をキャンセルして新しい音声を再生
-    window.speechSynthesis.cancel();
+    cancel(); // 新しく喋る前に、再生中の音声をすべて止める
 
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'ja-JP';
@@ -22,7 +24,7 @@ export const useSpeechSynthesis = () => {
     utterance.rate = 1.0;
 
     window.speechSynthesis.speak(utterance);
-  }, []);
+  }, [cancel]);
 
-  return { speak };
+  return { speak, cancel };
 };
