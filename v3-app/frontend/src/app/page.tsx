@@ -23,40 +23,41 @@ export default function Home() {
     sendMessage, cancelSpeak 
   } = useManabu(isListeningState);
 
-  // --- 修正された音声認識：考え中のシャットアウトと2回目以降の安定化 ---
+  // --- 【修正】音声認識：一時停止中・考え中のガードを強化 ---
   const { isListening, toggleListening } = useSpeechToText(
     // 確定結果（Final）
     (text) => {
-      if (isThinking) return;
+      // 【門番】考え中、または一時停止中（isListeningがfalse）なら、届いたテキストを完全に無視
+      if (isThinking || !isListening) return;
 
-      // 質問キーワード検知（より確実に配列でチェック）
+      // 質問キーワード検知
       const isQuestion = ["質問ある", "しつもんある", "わからないところ"].some(q => text.includes(q));
       
       if (isQuestion) {
-        setIsThinking(true);      // 1. ロック開始
-        setCurrentTranscript(""); // 2. 字幕を即座にクリア
-        sendMessage("USER_TALK", { text }); // 3. バックエンドに送信
-        return; // 思考モードに入るため、ここから下の通常処理は行わない
+        setIsThinking(true);
+        setCurrentTranscript("");
+        sendMessage("USER_TALK", { text });
+        return;
       }
       
       // 通常の発話処理
       sendMessage("USER_TALK", { text });
       setCurrentTranscript(text);
       
-      // 3秒後に「その言葉がまだ最新なら」字幕を消す（歯切れの良さを向上）
+      // 3秒後に字幕を消す
       setTimeout(() => {
         setCurrentTranscript(prev => prev === text ? "" : prev);
       }, 3000);
     },
     // 発話開始（Sound Start）
     () => {
-      // 考え中でなければ、マナブ君の相槌を即座に止める
-      if (!isThinking) cancelSpeak(); 
+      // 考え中、または一時停止中でなければ、相槌を止める
+      if (!isThinking && isListening) cancelSpeak(); 
     },
-    // 暫定結果（Interim：パタパタ書き換わっている時）
+    // 暫定結果（Interim）
     (interimText) => {
-      // 考え中なら字幕を表示させない（シャットアウト感の演出）
-      if (!isThinking) {
+      // 考え中、または一時停止中なら字幕を表示させない
+      if (!isThinking && isListening) {
         setCurrentTranscript(interimText);
       }
     }
@@ -79,6 +80,7 @@ export default function Home() {
 
   // タイマー管理
   useEffect(() => {
+    // isListening が false の間はタイマーが進まないようになっています
     if (isListening && timeLeft > 0) {
       timerRef.current = setInterval(() => setTimeLeft((prev) => prev - 1), 1000);
     } else {
@@ -107,18 +109,16 @@ export default function Home() {
     sendMessage("FINISH_LECTURE", {});
   };
 
-  // 【強化版】handleRestart：2回目以降も確実に動作させるためのクリーンアップ
   const handleRestart = () => {
-    cancelSpeak(); // マナブ君の声を物理的に停止
+    cancelSpeak();
     setNotebook(""); 
     setIsRestarting(false);
     setIsFinishing(false);
     setIsThinking(false);
-    setCurrentTranscript(""); // 字幕を確実に消去
-    setTimeLeft(300); // タイマーリセット
+    setCurrentTranscript("");
+    setTimeLeft(300);
     sendMessage("RESTART_LECTURE", {});
     
-    // 1秒待ってからマイクをオンにする（WebSocketのセッション安定化のため）
     setTimeout(() => {
       if (!isListening) toggleListening();
     }, 1000);
@@ -133,7 +133,6 @@ export default function Home() {
   return (
     <div className="flex min-h-screen bg-zinc-50 font-sans text-slate-900 overflow-hidden">
       <main className="flex-1 flex flex-col items-center justify-center p-8 relative">
-        {/* タイマー表示 */}
         {themes.length > 0 && (
           <div className={`absolute top-8 text-4xl font-mono font-bold ${timeLeft < 60 ? "text-red-500 animate-pulse" : "text-slate-400"}`}>
             {formatTime(timeLeft)}
@@ -146,7 +145,6 @@ export default function Home() {
             isListening={isListening && !isThinking} 
           />
           
-          {/* 字幕エリア：考え中は透明にする */}
           <div className="mt-4 min-h-[3rem] px-6">
             <p className={`text-lg font-medium transition-all duration-200 ${isThinking ? "opacity-0" : "opacity-100 text-slate-600"}`}>
               {currentTranscript || (isListening ? "マナブ君が聴いています..." : "")}

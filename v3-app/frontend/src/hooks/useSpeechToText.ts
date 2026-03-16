@@ -8,7 +8,7 @@ export const useSpeechToText = (
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
 
-  // 【修正】コールバックを Ref で保持し、常に最新の関数が呼ばれるようにする
+  // コールバックを Ref で保持し、常に最新の関数が呼ばれるようにする
   const refs = useRef({ onFinalTranscript, onSpeechStart, onInterimResult });
   useEffect(() => {
     refs.current = { onFinalTranscript, onSpeechStart, onInterimResult };
@@ -44,19 +44,31 @@ export const useSpeechToText = (
 
     // 自動停止対策：認識が切れても isListening が true なら再開
     recognition.onend = () => {
-      if (isListening) recognition.start();
+      if (isListening) {
+        try {
+          recognition.start();
+        } catch (e) {
+          console.error("Speech recognition restart error:", e);
+        }
+      }
     };
 
     recognitionRef.current = recognition;
-  }, [isListening]); // 依存配列を最小限に
+  }, [isListening]);
 
+  // 【修正】toggleListening: abort() の採用と try-catch による堅牢化
   const toggleListening = useCallback(() => {
     if (isListening) {
-      recognitionRef.current?.stop();
+      // stop() ではなく abort() を使うことで、即座に認識を中断し、未確定の結果を破棄する
+      recognitionRef.current?.abort();
       setIsListening(false);
     } else {
-      recognitionRef.current?.start();
-      setIsListening(true);
+      try {
+        recognitionRef.current?.start();
+        setIsListening(true);
+      } catch (e) {
+        console.error("Speech recognition start error:", e);
+      }
     }
   }, [isListening]);
 
