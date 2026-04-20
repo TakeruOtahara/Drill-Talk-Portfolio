@@ -1,13 +1,9 @@
-import os
-import base64
+# --- v3-app/backend/main.py ---
 import json
+import base64
 import random
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from dotenv import load_dotenv
 from logic import GeminiProvider
-from prompts import STATIC_BACKCHANNELS
-
-load_dotenv()
 
 app = FastAPI()
 ai_brain = GeminiProvider()
@@ -15,114 +11,119 @@ ai_brain = GeminiProvider()
 @app.websocket("/ws/manabu")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    
-    # --- マナブ君の記憶（ステート管理） ---
-    # 授業を跨いでも保持するもの
+    print("📢 接続成功：フロントエンドからマナブ君に回線がつながりました！", flush=True)
+
+    # セッションごとの状態管理
     state = {
         "original_text": "",
-        "themes": [],
-        "current_notebook": "", # 1つ前の授業で作ったノート（2回目以降のコンテキスト）
-        "lecture_history": [],  # 今回の授業での発言ログ
-        "current_score": 0,     # 今回の授業の理解度
-        "lesson_count": 1       # 何回目の授業か
+        "structured_original": {},
+        "lecture_history": [],
+        "chars_since_last_question": 0  # 💡【新規追加】質問の間隔を調整するカウンター
     }
 
     try:
         while True:
-            # フロントエンドからメッセージを受信
-            raw_data = await websocket.receive_text()
-            data = json.loads(raw_data)
-            data_type = data.get("type")
+            data = await websocket.receive_text()
+            message = json.loads(data)
+            data_type = message.get("type")
 
-            # 1. 教材の初期化（初回のみ）
+            # 【Azure対応】Pingを受信したら無視してTCP接続を維持する
+            if data_type == "PING":
+                continue
+
             if data_type == "INIT_MATERIAL":
-                image_bytes = base64.b64decode(data["image_base64"])
-                original, themes = await ai_brain.process_initial_material(image_bytes)
+                # 教材（画像）の受信と解析
+                images_base64 = message.get("images_base64", [])
                 
-                state["original_text"] = original
-                state["themes"] = themes
+                # 【セキュリティ強化】バックエンド側での枚数制限
+                if not isinstance(images_base64, list) or len(images_base64) > 5:
+                    await websocket.send_json({"type": "ERROR", "message": "画像は最大5枚までです。"})
+                    continue
                 
-                await websocket.send_json({
-                    "type": "MATERIAL_READY",
-                    "themes": themes
-                })
+                try:
+                    image_bytes_list = []
+                    for img in images_base64:
+                        # 【セキュリティ強化】データサイズの簡易チェック（約15MBの上限）
+                        if len(img) > 15 * 1024 * 1024:
+                            raise ValueError("画像サイズが大きすぎます。")
+                        image_bytes_list.append(base64.b64decode(img))
+                    
+                    original, structured = await ai_brain.process_initial_material(image_bytes_list)
+                    state["original_text"] = original
+                    state["structured_original"] = structured
+                    await websocket.send_json({"type": "MATERIAL_READY"})
+                except Exception as e:
+                    print(f"Error in INIT_MATERIAL: {e}", flush=True)
+                    await websocket.send_json({"type": "ERROR", "message": "教材の解析に失敗しました。もう一度試してください。"})
 
-            # 2. リアルタイム会話（音声認識結果が届くたびに実行）
             elif data_type == "USER_TALK":
-                user_text = data.get("text", "")
-                state["lecture_history"].append(user_text)
+                user_text = message.get("text", "")
+                skip_reaction = message.get("skip_reaction", False) 
                 
-                # スコア更新（API通信なしの高速処理）
-                state["current_score"] = ai_brain.calculate_score(user_text, state["current_score"])
+                if user_text:
+                    # ログの蓄積と文字数カウンターの加算
+                    state["lecture_history"].append(user_text)
+                    state["chars_since_last_question"] += len(user_text)
+                    
+                    if not skip_reaction:
+                        # 💡【UX改善】前回質問してから（または開始から）50文字以上話しているかチェック
+                        if state["chars_since_last_question"] >= 50 and random.random() < 0.3:
+                            question = await ai_brain.generate_student_question(
+                                " ".join(state["lecture_history"]), 
+                                state["structured_original"]
+                            )
+                            # 質問が生成されたらカウンターをリセット
+                            state["chars_since_last_question"] = 0
 
-                # --- 修正：相槌ロジック ---
-                # 1. 「質問ある？」系は最優先（100%反応）
-                if any(kw in user_text for kw in ["質問ある", "しつもんある", "わからないところある"]):
-                    question = await ai_brain.generate_student_question(
-                        state["current_notebook"],
+                            await websocket.send_json({
+                                "type": "STUDENT_QUESTION",
+                                "message": question
+                            })
+                        else:
+                            # 💡 文字数が足りない、または30%の抽選に漏れた場合は相槌を打つ
+                            emotions = ["happy", "neutral", "excited"]
+                            aizuchi_text = ""
+                            
+                            if random.random() < 0.5:
+                                aizuchi_text = random.choice(["はい！", "なるほど", "うんうん", "そうなんですね", "おもしろいです！"])
+                            
+                            await websocket.send_json({
+                                "type": "REACTION",
+                                "emotion": random.choice(emotions),
+                                "message": aizuchi_text
+                            })
+                    else:
+                        print("⏳ 質問待機中または発声中のため、相槌・質問生成をスキップしました", flush=True)
+
+            elif data_type == "FINISH_LECTURE":
+                # メモを受け取り、最終評価へ
+                user_memo = message.get("user_memo", "")
+                print(f"📥 評価フェーズ：メモ「{user_memo[:20]}...」を受信", flush=True)
+                
+                try:
+                    result = await ai_brain.generate_final_note(
+                        state["lecture_history"],
                         state["original_text"],
-                        state["themes"]
+                        state["structured_original"],
+                        user_memo
                     )
                     await websocket.send_json({
-                        "type": "STUDENT_QUESTION",
-                        "message": question,
-                        "emotion": "confused"
+                        "type": "FINAL_NOTE",
+                        "notebook": result["notebook_html"],
+                        "missing_points": result["missing_points"],
+                        "misconceptions": result["misconceptions"]
                     })
-                
-                # 2. 通常の相槌は「3回に1回」程度に減らす（確率は好みで調整）
-                elif random.random() < 0.3: 
-                    reaction = random.choice(STATIC_BACKCHANNELS)
-                    await websocket.send_json({
-                        "type": "REACTION",
-                        "message": reaction["text"],
-                        "emotion": reaction["emotion"],
-                        "score": state["current_score"]
-                    })
-                
-                # 3. それ以外（70%の確率）は何もしない
-                else:
-                    pass
+                except Exception as e:
+                    print(f"Error in FINISH_LECTURE: {e}", flush=True)
+                    await websocket.send_json({"type": "ERROR", "message": "評価ノートの作成に失敗しました。"})
 
-            # 3. 本領発揮（5分経過 or 強制終了）
-            elif data_type == "FINISH_LECTURE":
-                # 前回のノートをコンテキストとして渡し、今回の説明で「上書き」する
-                result = await ai_brain.generate_final_note(
-                    state["lecture_history"],
-                    state["original_text"],
-                    state["themes"],
-                    previous_notebook=state["current_notebook"]
-                )
-                
-                # 状態を更新（ノートを最新版にし、達成したテーマを [OK] に）
-                state["current_notebook"] = result["notebook"]
-                state["themes"] = result["themes"]
-                
-                await websocket.send_json({
-                    "type": "FINAL_NOTE",
-                    "notebook": result["notebook"],
-                    "themes": result["themes"],
-                    "score": state["current_score"]
-                })
-
-            # 4. 「もう一度教える」ボタン（リセット処理）
             elif data_type == "RESTART_LECTURE":
-                state["lesson_count"] += 1
-                state["lecture_history"] = [] # 今回の発言ログはクリア
-                state["current_score"] = 0     # スコアも一旦リセット
-                # ※ original_text, themes, current_notebook は保持される
-                
-                await websocket.send_json({
-                    "type": "RESTARTED",
-                    "message": f"{state['lesson_count']}回目の授業ですね。よろしくお願いします！",
-                    "themes": state["themes"]
-                })
+                # 状態をリセットして再開（カウンターもリセット）
+                state["lecture_history"] = []
+                state["chars_since_last_question"] = 0
+                await websocket.send_json({"type": "RESTARTED", "message": "準備ができました。もう一度説明してください！"})
 
     except WebSocketDisconnect:
-        print("先生が退出しました。")
+        print("🔌 接続終了：先生が退出しました", flush=True)
     except Exception as e:
-        print(f"エラー発生: {e}")
-        await websocket.send_json({"type": "ERROR", "message": "マナブ君が混乱しています...もう一度お願いします。"})
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+        print(f"⚠️ 予期せぬエラー: {e}", flush=True)

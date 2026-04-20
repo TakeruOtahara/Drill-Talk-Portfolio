@@ -1,26 +1,33 @@
+# --- v3-app/frontend/Dockerfile ---
+
 # --- ビルド用ステージ ---
 FROM node:20-alpine AS builder
+
+# 💡 修正ポイント1: Alpine LinuxでSWC（コンパイラ）を動かすための必須ライブラリを追加
+RUN apk add --no-cache libc6-compat
+
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
-# .env.local ではなく、ビルド時に必要な環境変数があればここで定義
 RUN npm run build
+
 
 # --- 実行用ステージ（軽量化） ---
 FROM node:20-alpine AS runner
 WORKDIR /app
 
-# 本番環境であることを指定
 ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
 
-# builderステージから必要なファイルだけをコピー
-COPY --from=builder /app/next.config.ts ./
+# 💡 修正ポイント2: standaloneモードで生成された「実行に必要な最小限のファイル」だけをコピーする
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
-# ポート3000で起動
 EXPOSE 3000
-CMD ["npm", "start"]
+ENV PORT 3000
+ENV HOSTNAME "0.0.0.0"
+
+# 💡 修正ポイント3: npm start ではなく、自動生成された実行ファイル（server.js）を直接叩く
+CMD ["node", "server.js"]

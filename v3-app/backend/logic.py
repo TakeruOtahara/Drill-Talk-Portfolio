@@ -1,6 +1,8 @@
 # --- v3-app/backend/logic.py ---
 import os
 import json
+import asyncio
+import random
 from google import genai
 from google.genai import types
 from prompts import INITIAL_MATERIAL_PROMPT, FINAL_NOTEBOOK_PROMPT, STUDENT_QUESTION_PROMPT
@@ -13,83 +15,96 @@ class GeminiProvider:
         
         self.client = genai.Client(api_key=api_key)
         self.model_id = "gemini-2.5-flash"
-        self.hidden_keywords = []
 
-    async def process_initial_material(self, image_bytes):
-        """
-        教材画像から原本・テーマ・キーワードを初回生成
-        """
-        image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
+    def _clean_json_string(self, raw_text: str) -> str:
+        """Geminiが返してくるMarkdown記号を削除する"""
+        text = raw_text.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        elif text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        return text.strip()
 
-        response = self.client.models.generate_content(
-            model=self.model_id,
-            contents=[INITIAL_MATERIAL_PROMPT, image_part],
-            config=types.GenerateContentConfig(
-                response_mime_type='application/json'
-            )
+    async def _generate_with_retry(self, contents, config=None, max_retries=5):
+        """
+        指数バックオフ（Jitter付き）によるリトライ処理
+        """
+        base_delay = 2 
+        for i in range(max_retries + 1):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model_id,
+                    contents=contents,
+                    config=config
+                )
+                return response
+            except Exception as e:
+                error_str = str(e)
+                # 503 (Unavailable) または 429 (Too Many Requests) の場合
+                if ("503" in error_str or "429" in error_str) and i < max_retries:
+                    delay = (base_delay * (2 ** i)) + (random.uniform(0, 1))
+                    print(f"⚠️ API混雑中 (Attempt {i+1}). {delay:.2f}秒後に再試行...", flush=True)
+                    await asyncio.sleep(delay)
+                    continue
+                raise e
+
+    async def process_initial_material(self, image_bytes_list):
+        """
+        画像（最大5枚）から4要素を抽出
+        """
+        # 保身（セキュリティ）：バックエンド側でも5枚に制限
+        safe_list = image_bytes_list[:5]
+        image_parts = [
+            types.Part.from_bytes(data=b, mime_type="image/jpeg") 
+            for b in safe_list
+        ]
+
+        response = await self._generate_with_retry(
+            contents=[INITIAL_MATERIAL_PROMPT] + image_parts,
+            config=types.GenerateContentConfig(response_mime_type='application/json')
         )
 
-        data = json.loads(response.text)
-        self.hidden_keywords = data.get("hidden_keywords", [])
-        return data.get("original_text", ""), data.get("themes", [])
+        cleaned_text = self._clean_json_string(response.text)
+        data = json.loads(cleaned_text)
+        return data.get("original_text", ""), data.get("structured_original", {})
 
-    def calculate_score(self, user_text, current_score):
+    async def generate_student_question(self, all_user_text, structured_original):
         """
-        キーワード照合によるスコアリング（API通信なし）
+        途中の質問生成
         """
-        match_count = 0
-        for kw in self.hidden_keywords:
-            if kw in user_text:
-                match_count += 1
-        return min(current_score + (match_count * 5), 100)
-
-    async def generate_student_question(self, current_notebook, original_text, current_themes):
-        """
-        「質問ある？」への回答生成。ノートの不足分を突っ込む
-        """
-        prompt = f"{STUDENT_QUESTION_PROMPT}\n\n原本:\n{original_text}\n\n現在のノート:\n{current_notebook}\n\n現在のテーマ:\n{current_themes}"
-        
-        response = self.client.models.generate_content(
-            model=self.model_id,
-            contents=prompt
-        )
+        prompt = f"{STUDENT_QUESTION_PROMPT}\n\n【教材の4要素】\n{json.dumps(structured_original, ensure_ascii=False)}\n\n【先生のこれまでの説明】\n{all_user_text}"
+        response = await self._generate_with_retry(contents=prompt)
         return response.text
 
-    async def generate_final_note(self, lecture_history, original_text, current_themes, previous_notebook=""):
+    async def generate_final_note(self, lecture_history, original_text, structured_original, user_memo):
         """
-        原本 + 今回のログ + 前回のノートを比較して、最新ノートを作成
+        原本・説明ログ・忘れたことメモの3点を比較して最終評価を作成
         """
         all_user_text = " ".join(lecture_history)
         
-        # 3者の比較指示。何回目（3回目、4回目...）でも機能する。
+        # 💡 プロンプトを強化：原本・ログ・メモの三者照合を指示
         prompt = (
             f"{FINAL_NOTEBOOK_PROMPT}\n\n"
-            f"【原本（絶対的な正解）】\n{original_text}\n\n"
-            f"【前回のノート（これまでの理解）】\n{previous_notebook}\n\n"
-            f"【今回の先生の説明（最新の追加情報）】\n{all_user_text}\n\n"
-            f"【現在のテーマ状態】\n{current_themes}"
+            f"【教材の原本】\n{original_text}\n\n"
+            f"【教材の4要素（正解）】\n{json.dumps(structured_original, ensure_ascii=False)}\n\n"
+            f"【先生の説明ログ】\n{all_user_text}\n\n"
+            f"【先生による『忘れたことメモ』（自己申告）】\n{user_memo}\n\n"
+            "指示：原本と説明ログを比較して教え漏れを抽出してください。その際、先生の『忘れたことメモ』も確認してください。"
+            "メモにある項目が説明ログにない場合は『自覚のある教え漏れ』として、メモにもログにもない場合は『無自覚な教え漏れ』として扱い、"
+            "先生のメタ認知能力（自分の抜け漏れを把握できているか）を評価に反映してください。"
         )
 
-        response = self.client.models.generate_content(
-            model=self.model_id,
+        response = await self._generate_with_retry(
             contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type='application/json'
-            )
+            config=types.GenerateContentConfig(response_mime_type='application/json')
         )
-
-        data = json.loads(response.text)
         
-        # テーマの [?] -> [OK] 書き換え処理
-        completed = data.get("completed_themes", [])
-        updated_themes = []
-        for theme in current_themes:
-            if any(c_title in theme for c_title in completed):
-                updated_themes.append(theme.replace("[?]", "[OK]"))
-            else:
-                updated_themes.append(theme)
-
+        cleaned_text = self._clean_json_string(response.text)
+        data = json.loads(cleaned_text)
         return {
-            "notebook": data.get("notebook_html", ""),
-            "themes": updated_themes
+            "notebook_html": data.get("notebook_html", ""),
+            "missing_points": data.get("missing_points", []),
+            "misconceptions": data.get("misconceptions", [])
         }

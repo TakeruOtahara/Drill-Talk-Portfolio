@@ -1,92 +1,131 @@
+// --- v3-app/frontend/src/hooks/useManabu.ts ---
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSpeechSynthesis } from './useSpeechSynthesis';
 
-export const useManabu = (isListening: boolean) => {
+interface UseManabuProps {
+  isListening: boolean;
+  onError?: () => void;
+}
+
+export const useManabu = ({ isListening, onError }: UseManabuProps) => {
   const { speak, cancel: cancelSpeak } = useSpeechSynthesis();
   const [socket, setSocket] = useState<WebSocket | null>(null);
-  const [themes, setThemes] = useState<string[]>([]);
+  
+  const messageQueue = useRef<string[]>([]);
+  const questionQueue = useRef<string[]>([]);
+  
   const [notebook, setNotebook] = useState("");
-  const [currentScore, setCurrentScore] = useState(0);
+  const [missingPoints, setMissingPoints] = useState<string[]>([]);
+  const [misconceptions, setMisconceptions] = useState<string[]>([]);
   const [emotion, setEmotion] = useState<'neutral' | 'happy' | 'excited' | 'confused'>('neutral');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [isThinking, setIsThinking] = useState(false);
+  const [isBackendThinking, setIsBackendThinking] = useState(false);
 
-  // 【修正】最新の isListening を WebSocket 内で参照するための Ref
+  const [isManabuSpeaking, setIsManabuSpeaking] = useState(false);
+
   const isListeningRef = useRef(isListening);
-  useEffect(() => {
-    isListeningRef.current = isListening;
-  }, [isListening]);
-
-  const lastReactionTimeRef = useRef<number>(0);
-  const REACTION_COOLDOWN = 15000;
+  useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
 
   useEffect(() => {
-    // 接続先URL。環境変数がない場合はローカル
+    // 💡【Azure対応】URLのハードコードを廃止し、環境変数を利用
     const url = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/manabu';
+    console.log("🚀 マナブ君に回線をつなぎます...", url);
     const ws = new WebSocket(url);
     
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      const now = Date.now();
+    ws.onopen = () => {
+      console.log("✅ マナブ君とつながりました");
+      while (messageQueue.current.length > 0) {
+        const msg = messageQueue.current.shift();
+        if (msg) ws.send(msg);
+      }
 
-      // 何かメッセージが届いたら考え中を解除（ガード強化）
-      const unlockTypes = ["REACTION", "STUDENT_QUESTION", "FINAL_NOTE", "RESTARTED"];
+      // 💡【Azure対応】通信のアイドルタイムアウトを防ぐためのPing送信（30秒ごと）
+      const pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "PING" }));
+        }
+      }, 30000);
+
+      // 💡 切断時にPingタイマーをクリアする設定
+      ws.onclose = () => {
+        clearInterval(pingInterval);
+        console.log("🔌 接続終了");
+      };
+    };
+
+    ws.onmessage = (event) => {
+      console.log("📥 受信データ:", event.data);
+      const data = JSON.parse(event.data);
+      
+      const unlockTypes = ["REACTION", "STUDENT_QUESTION", "FINAL_NOTE", "RESTARTED", "MATERIAL_READY", "ERROR"];
       if (unlockTypes.includes(data.type)) {
-        setIsThinking(false);
+        setIsBackendThinking(false);
       }
 
       switch (data.type) {
         case "MATERIAL_READY":
-          setThemes(data.themes);
           setIsAnalyzing(false);
           break;
-
         case "REACTION":
-          // Refを使って現在のマイク状態を確認（接続は切らない）
-          if (isListeningRef.current || (now - lastReactionTimeRef.current) < REACTION_COOLDOWN) {
-            setEmotion(data.emotion);
-            return; 
-          }
-          lastReactionTimeRef.current = now;
-          setCurrentScore(data.score);
           setEmotion(data.emotion);
-          speak(data.message); 
+          if (data.message) {
+            console.log("🗣️ 相槌を発声します:", data.message);
+            setIsManabuSpeaking(true);
+            speak(data.message, () => {
+                setIsManabuSpeaking(false);
+            });
+          }
           break;
-
         case "STUDENT_QUESTION":
           setEmotion("confused");
-          speak(data.message); 
+          console.log("📥 マナブ君が質問を思いつきました。先生が話し終わるのを待ちます。");
+          questionQueue.current.push(data.message);
           break;
-
         case "FINAL_NOTE":
-          const noteData = data.notebook || data.notebook_html || "";
-          setNotebook(noteData);
-          setThemes(data.themes);
+          setNotebook(data.notebook || "");
+          setMissingPoints(data.missing_points || []);
+          setMisconceptions(data.misconceptions || []);
           setEmotion("neutral");
-          speak("まとめノートができました！");
+          setIsManabuSpeaking(true);
+          speak("まとめノートができました！", () => setIsManabuSpeaking(false));
           break;
-
         case "RESTARTED":
-          setThemes(data.themes);
           setNotebook("");
-          setCurrentScore(0);
-          speak(data.message);
+          setIsManabuSpeaking(true);
+          speak(data.message, () => setIsManabuSpeaking(false));
+          break;
+        case "ERROR":
+          setIsAnalyzing(false);
+          setIsBackendThinking(false);
+          setEmotion("confused");
+          setIsManabuSpeaking(true);
+          speak(data.message, () => setIsManabuSpeaking(false));
+          if (onError) onError();
           break;
       }
     };
 
+    ws.onerror = (e) => console.error("❌ 通信エラー:", e);
+
     setSocket(ws);
-    // クリーンアップ：コンポーネントが消える時だけ切断する
-    return () => {
-      if (ws.readyState === WebSocket.OPEN) ws.close();
-    };
-  }, [speak]); // isListening を外したことで接続が安定します
+    return () => { ws.close(); };
+  }, [speak, onError]);
 
   const sendMessage = useCallback((type: string, payload: any) => {
+    const message = JSON.stringify({ type, ...payload });
     if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type, ...payload }));
+      socket.send(message);
+    } else {
+      messageQueue.current.push(message);
     }
   }, [socket]);
 
-  return { themes, currentScore, emotion, notebook, setNotebook, isAnalyzing, setIsAnalyzing, isThinking, setIsThinking, sendMessage, cancelSpeak };
+  return { 
+    notebook, setNotebook, missingPoints, misconceptions, 
+    emotion, isAnalyzing, setIsAnalyzing, 
+    isBackendThinking, setIsBackendThinking, 
+    isManabuSpeaking, setIsManabuSpeaking,
+    questionQueue, 
+    sendMessage, speak, cancelSpeak 
+  };
 };
