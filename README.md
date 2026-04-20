@@ -1,4 +1,5 @@
 全体システム構成図（System Architecture）
+```mermaid
 graph TD
     subgraph Client [クライアント層]
         A[Web Browser]
@@ -23,7 +24,9 @@ graph TD
     class A,UI client;
     class API server;
     class LLM external;
+```
 リアルタイム通信シーケンス図（Real-time Sequence）
+```mermaid
 sequenceDiagram
     participant U as ユーザー(先生)
     participant F as フロントエンド(Next.js)
@@ -58,7 +61,9 @@ sequenceDiagram
     G-->>B: 評価ノート (HTML) / 勘違い / 漏れ
     B-->>F: FINAL_NOTE
     F-->>U: 復習ノートのモーダル表示
+```
 Azure デプロイメント構成図（Azure Infrastructure）
+```mermaid
 graph LR
     subgraph Local [開発環境]
         Dev[Local PC<br>Docker Build]
@@ -78,3 +83,4 @@ graph LR
 
     classDef azure fill:#bfdbfe,stroke:#0284c7,stroke-width:2px,color:#0f172a;
     class ACR,ACA,Monitor azure;
+```
