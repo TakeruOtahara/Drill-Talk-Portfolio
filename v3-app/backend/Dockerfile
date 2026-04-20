@@ -5,8 +5,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # 3. 依存関係ファイルをコピーしてインストール
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.lock .
+RUN pip install --no-cache-dir -r requirements.lock
 
 # 4. バックエンドのソースコードを全てコピー
 COPY . .
