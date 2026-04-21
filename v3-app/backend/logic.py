@@ -27,9 +27,10 @@ class GeminiProvider:
             text = text[:-3]
         return text.strip()
 
-    async def _generate_with_retry(self, contents, config=None, max_retries=5):
+    async def _generate_with_retry(self, contents, config=None, max_retries=3):
         """
-        指数バックオフ（Jitter付き）によるリトライ処理
+        指数バックオフ（Jitter付き）によるリトライ処理。
+        最大試行回数を3回に制限。
         """
         base_delay = 2 
         for i in range(max_retries + 1):
@@ -45,22 +46,25 @@ class GeminiProvider:
                 # 503 (Unavailable) または 429 (Too Many Requests) の場合
                 if ("503" in error_str or "429" in error_str) and i < max_retries:
                     delay = (base_delay * (2 ** i)) + (random.uniform(0, 1))
-                    print(f"⚠️ API混雑中 (Attempt {i+1}). {delay:.2f}秒後に再試行...", flush=True)
+                    print(f"⚠️ API混雑中 (Attempt {i+1}/{max_retries}). {delay:.2f}秒後に再試行...", flush=True)
                     await asyncio.sleep(delay)
                     continue
+                
+                # リトライ上限に達した、またはそれ以外の致命的なエラー
+                print(f"❌ APIエラー確定: {error_str}", flush=True)
                 raise e
 
     async def process_initial_material(self, image_bytes_list):
         """
-        画像（最大5枚）から4要素を抽出
+        画像（最大5枚）から4要素（核・因果・イメージ・翻訳）を抽出
         """
-        # 保身（セキュリティ）：バックエンド側でも5枚に制限
         safe_list = image_bytes_list[:5]
         image_parts = [
             types.Part.from_bytes(data=b, mime_type="image/jpeg") 
             for b in safe_list
         ]
 
+        # max_retries=3 で実行
         response = await self._generate_with_retry(
             contents=[INITIAL_MATERIAL_PROMPT] + image_parts,
             config=types.GenerateContentConfig(response_mime_type='application/json')
@@ -72,7 +76,7 @@ class GeminiProvider:
 
     async def generate_student_question(self, all_user_text, structured_original):
         """
-        途中の質問生成
+        講義中の質問生成
         """
         prompt = f"{STUDENT_QUESTION_PROMPT}\n\n【教材の4要素】\n{json.dumps(structured_original, ensure_ascii=False)}\n\n【先生のこれまでの説明】\n{all_user_text}"
         response = await self._generate_with_retry(contents=prompt)
@@ -80,11 +84,11 @@ class GeminiProvider:
 
     async def generate_final_note(self, lecture_history, original_text, structured_original, user_memo):
         """
-        原本・説明ログ・忘れたことメモの3点を比較して最終評価を作成
+        原本・説明ログ・忘れたことメモの3点を比較して最終評価を作成。
+        メタ認知能力（自覚のある教え漏れ vs 無自覚な漏れ）を評価に反映する。
         """
         all_user_text = " ".join(lecture_history)
         
-        # 💡 プロンプトを強化：原本・ログ・メモの三者照合を指示
         prompt = (
             f"{FINAL_NOTEBOOK_PROMPT}\n\n"
             f"【教材の原本】\n{original_text}\n\n"
@@ -93,7 +97,7 @@ class GeminiProvider:
             f"【先生による『忘れたことメモ』（自己申告）】\n{user_memo}\n\n"
             "指示：原本と説明ログを比較して教え漏れを抽出してください。その際、先生の『忘れたことメモ』も確認してください。"
             "メモにある項目が説明ログにない場合は『自覚のある教え漏れ』として、メモにもログにもない場合は『無自覚な教え漏れ』として扱い、"
-            "先生のメタ認知能力（自分の抜け漏れを把握できているか）を評価に反映してください。"
+            "先生のメタ認知能力を評価に反映してください。"
         )
 
         response = await self._generate_with_retry(

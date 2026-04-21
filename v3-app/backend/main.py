@@ -18,7 +18,7 @@ async def websocket_endpoint(websocket: WebSocket):
         "original_text": "",
         "structured_original": {},
         "lecture_history": [],
-        "chars_since_last_question": 0  # 💡【新規追加】質問の間隔を調整するカウンター
+        "chars_since_last_question": 0  # 質問の間隔を調整するカウンター
     }
 
     try:
@@ -37,24 +37,44 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 # 【セキュリティ強化】バックエンド側での枚数制限
                 if not isinstance(images_base64, list) or len(images_base64) > 5:
+                    print("⚠️ バリデーション失敗：枚数オーバー", flush=True)
                     await websocket.send_json({"type": "ERROR", "message": "画像は最大5枚までです。"})
                     continue
                 
                 try:
                     image_bytes_list = []
-                    for img in images_base64:
-                        # 【セキュリティ強化】データサイズの簡易チェック（約15MBの上限）
-                        if len(img) > 15 * 1024 * 1024:
-                            raise ValueError("画像サイズが大きすぎます。")
+                    for i, img in enumerate(images_base64):
+                        # 💡 1. Base64のヘッダー（data:image/...;base64,）を取り除く
+                        if "," in img:
+                            img = img.split(",")[1]
+                        
+                        # 💡 2. サイズ制限のバリデーション
+                        # Base64は元のバイナリより約1.33倍膨らむため、5MBの画像は約6.7M文字になる
+                        max_char_count = 5 * 1024 * 1024 * 1.33 
+                        if len(img) > max_char_count:
+                            print(f"⚠️ 画像 {i+1} 枚目が大きすぎます（約5MB制限）", flush=True)
+                            await websocket.send_json({"type": "ERROR", "message": f"{i+1}枚目の画像が大きすぎます（5MB以下にしてください）"})
+                            raise ValueError(f"Image {i+1} size exceeded.")
+
+                        # デコードしてバイト列に変換
                         image_bytes_list.append(base64.b64decode(img))
                     
+                    print(f"📸 {len(image_bytes_list)} 枚の画像を解析開始...", flush=True)
+                    
+                    # Geminiによる教材解析
                     original, structured = await ai_brain.process_initial_material(image_bytes_list)
+                    
                     state["original_text"] = original
                     state["structured_original"] = structured
+                    
                     await websocket.send_json({"type": "MATERIAL_READY"})
+                    print("✅ 解析完了：マナブ君の準備が整いました", flush=True)
+
                 except Exception as e:
-                    print(f"Error in INIT_MATERIAL: {e}", flush=True)
-                    await websocket.send_json({"type": "ERROR", "message": "教材の解析に失敗しました。もう一度試してください。"})
+                    print(f"❌ Error in INIT_MATERIAL: {e}", flush=True)
+                    # 既にエラーメッセージを送っていない場合のみ送る
+                    if "exceeded" not in str(e):
+                        await websocket.send_json({"type": "ERROR", "message": "教材の解析に失敗しました。画像の形式やサイズを確認してください。"})
 
             elif data_type == "USER_TALK":
                 user_text = message.get("text", "")
@@ -66,7 +86,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     state["chars_since_last_question"] += len(user_text)
                     
                     if not skip_reaction:
-                        # 💡【UX改善】前回質問してから（または開始から）50文字以上話しているかチェック
+                        # 💡【UX改善】50文字以上話しているかチェック ＋ 30%の確率で質問
                         if state["chars_since_last_question"] >= 50 and random.random() < 0.3:
                             question = await ai_brain.generate_student_question(
                                 " ".join(state["lecture_history"]), 
@@ -80,7 +100,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "message": question
                             })
                         else:
-                            # 💡 文字数が足りない、または30%の抽選に漏れた場合は相槌を打つ
+                            # 文字数が足りない、または確率で相槌を打つ
                             emotions = ["happy", "neutral", "excited"]
                             aizuchi_text = ""
                             
@@ -114,11 +134,11 @@ async def websocket_endpoint(websocket: WebSocket):
                         "misconceptions": result["misconceptions"]
                     })
                 except Exception as e:
-                    print(f"Error in FINISH_LECTURE: {e}", flush=True)
+                    print(f"❌ Error in FINISH_LECTURE: {e}", flush=True)
                     await websocket.send_json({"type": "ERROR", "message": "評価ノートの作成に失敗しました。"})
 
             elif data_type == "RESTART_LECTURE":
-                # 状態をリセットして再開（カウンターもリセット）
+                # 状態をリセットして再開
                 state["lecture_history"] = []
                 state["chars_since_last_question"] = 0
                 await websocket.send_json({"type": "RESTARTED", "message": "準備ができました。もう一度説明してください！"})
