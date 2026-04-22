@@ -3,9 +3,13 @@ import os
 import json
 import asyncio
 import random
+import logging  # 💡 追加
 from google import genai
 from google.genai import types
 from prompts import INITIAL_MATERIAL_PROMPT, FINAL_NOTEBOOK_PROMPT, STUDENT_QUESTION_PROMPT
+
+# 💡 ロガーの設定
+logger = logging.getLogger("drilltalk.logic")
 
 class GeminiProvider:
     def __init__(self):
@@ -30,7 +34,7 @@ class GeminiProvider:
     async def _generate_with_retry(self, contents, config=None, max_retries=3):
         """
         指数バックオフ（Jitter付き）によるリトライ処理。
-        最大試行回数を3回に制限。
+        最大試行回数を3回に制限し、ログを構造化。
         """
         base_delay = 2 
         for i in range(max_retries + 1):
@@ -46,17 +50,18 @@ class GeminiProvider:
                 # 503 (Unavailable) または 429 (Too Many Requests) の場合
                 if ("503" in error_str or "429" in error_str) and i < max_retries:
                     delay = (base_delay * (2 ** i)) + (random.uniform(0, 1))
-                    print(f"⚠️ API混雑中 (Attempt {i+1}/{max_retries}). {delay:.2f}秒後に再試行...", flush=True)
+                    # 💡 print を logger.warning に変更
+                    logger.warning(f"⚠️ API混雑中 (Attempt {i+1}/{max_retries}). {delay:.2f}秒後に再試行...")
                     await asyncio.sleep(delay)
                     continue
                 
-                # リトライ上限に達した、またはそれ以外の致命的なエラー
-                print(f"❌ APIエラー確定: {error_str}", flush=True)
+                # 💡 リトライ上限、または致命的なエラー
+                logger.error(f"❌ APIエラー確定: {error_str}", exc_info=True)
                 raise e
 
     async def process_initial_material(self, image_bytes_list):
         """
-        画像（最大5枚）から4要素（核・因果・イメージ・翻訳）を抽出
+        画像（最大5枚）から4要素（核・因果・イメージ・翻訳）を抽出。
         """
         safe_list = image_bytes_list[:5]
         image_parts = [
@@ -64,15 +69,19 @@ class GeminiProvider:
             for b in safe_list
         ]
 
-        # max_retries=3 で実行
         response = await self._generate_with_retry(
             contents=[INITIAL_MATERIAL_PROMPT] + image_parts,
             config=types.GenerateContentConfig(response_mime_type='application/json')
         )
 
-        cleaned_text = self._clean_json_string(response.text)
-        data = json.loads(cleaned_text)
-        return data.get("original_text", ""), data.get("structured_original", {})
+        try:
+            cleaned_text = self._clean_json_string(response.text)
+            data = json.loads(cleaned_text)
+            return data.get("original_text", ""), data.get("structured_original", {})
+        except (json.JSONDecodeError, AttributeError, Exception) as e:
+            # 💡 エラーレベルを適切に使い分け（パース失敗は警告として記録）
+            logger.warning(f"⚠️ [INIT_MATERIAL] JSONパース失敗: {e}")
+            return "", {}
 
     async def generate_student_question(self, all_user_text, structured_original):
         """
@@ -85,7 +94,6 @@ class GeminiProvider:
     async def generate_final_note(self, lecture_history, original_text, structured_original, user_memo):
         """
         原本・説明ログ・忘れたことメモの3点を比較して最終評価を作成。
-        メタ認知能力（自覚のある教え漏れ vs 無自覚な漏れ）を評価に反映する。
         """
         all_user_text = " ".join(lecture_history)
         
@@ -96,8 +104,7 @@ class GeminiProvider:
             f"【先生の説明ログ】\n{all_user_text}\n\n"
             f"【先生による『忘れたことメモ』（自己申告）】\n{user_memo}\n\n"
             "指示：原本と説明ログを比較して教え漏れを抽出してください。その際、先生の『忘れたことメモ』も確認してください。"
-            "メモにある項目が説明ログにない場合は『自覚のある教え漏れ』として、メモにもログにもない場合は『無自覚な教え漏れ』として扱い、"
-            "先生のメタ認知能力を評価に反映してください。"
+            "メタ認知能力を評価に反映してください。"
         )
 
         response = await self._generate_with_retry(
@@ -105,10 +112,18 @@ class GeminiProvider:
             config=types.GenerateContentConfig(response_mime_type='application/json')
         )
         
-        cleaned_text = self._clean_json_string(response.text)
-        data = json.loads(cleaned_text)
-        return {
-            "notebook_html": data.get("notebook_html", ""),
-            "missing_points": data.get("missing_points", []),
-            "misconceptions": data.get("misconceptions", [])
-        }
+        try:
+            cleaned_text = self._clean_json_string(response.text)
+            data = json.loads(cleaned_text)
+            return {
+                "notebook_html": data.get("notebook_html", "<h3>エラーが発生しました</h3><p>ノートの内容を正しく生成できませんでした。</p>"),
+                "missing_points": data.get("missing_points", []),
+                "misconceptions": data.get("misconceptions", [])
+            }
+        except Exception as e:
+            logger.warning(f"⚠️ [FINAL_NOTE] JSONパース失敗: {e}")
+            return {
+                "notebook_html": "<h3>マナブ君が少し混乱しています</h3><p>解析データの処理に失敗しました。もう一度説明をお願いできますか？</p>",
+                "missing_points": ["（解析エラー）"],
+                "misconceptions": []
+            }
