@@ -7,7 +7,7 @@ import { ManabuAvatar } from "@/components/ManabuAvatar";
 import { NotebookModal } from "@/components/NotebookModal";
 import { TutorialOverlay } from "@/components/TutorialOverlay";
 import { useRef, useState, useEffect, useCallback } from "react";
-import { RefreshCcw, ShieldCheck, BookOpen } from "lucide-react";
+import { RefreshCcw, ShieldCheck, BookOpen, Loader2 } from "lucide-react"; // Loader2 を追加
 
 export default function Home() {
   const MAX_MEMO_LENGTH = 1000;
@@ -44,7 +44,7 @@ export default function Home() {
 
   const { isListening, toggleListening } = useSpeechToText(
     (text) => {
-      if (isManabuSpeaking) return;
+      if (isManabuSpeaking || isFinishing) return; // 評価中も入力を無視
 
       const hasQueuedQuestion = questionQueue.current.length > 0;
 
@@ -87,10 +87,9 @@ export default function Home() {
 
   useEffect(() => { setIsListeningState(isListening); }, [isListening]);
 
-  // 💡【修正箇所1】タイマー終了時の重複実行を isFinishing フラグで確実に防ぐ
   useEffect(() => {
     let timer: NodeJS.Timeout;
-    if (isListening && !isManabuSpeaking && timeLeft > 0) {
+    if (isListening && !isManabuSpeaking && !isFinishing && timeLeft > 0) {
       timer = setInterval(() => setTimeLeft((prev) => prev - 1), 1000);
     }
     if (timeLeft === 0 && lessonStarted && !isFinishing) {
@@ -140,9 +139,8 @@ export default function Home() {
     });
   };
 
-  // 💡【修正箇所2】二重クリックやタイマーとの衝突を防ぐガード節を追加
   const handleFinish = () => {
-    if (isFinishing) return; // すでに終了処理中なら弾く
+    if (isFinishing) return; 
     
     setIsFinishing(true); 
     if (isListening) toggleListening();
@@ -199,18 +197,15 @@ export default function Home() {
               className="w-full h-auto drop-shadow-2xl relative z-10" 
             />
             
-            {/* 先生が話している時の青いオーラ */}
             {isListening && !isBackendThinking && !isManabuSpeaking && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-blue-500 rounded-full blur-[80px] opacity-10 animate-pulse z-0"></div>
             )}
 
-            {/* マナブ君が話している時の緑のオーラ */}
             {isManabuSpeaking && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-emerald-500 rounded-full blur-[80px] opacity-20 animate-pulse z-0"></div>
             )}
           </div>
 
-          {/* 教材プレビュー */}
           {imagePreviews.length > 0 && !lessonStarted && (
             <div className="flex flex-wrap gap-3 justify-center animate-in slide-in-from-bottom-4 duration-500 max-w-lg">
               {imagePreviews.map((src, i) => (
@@ -235,11 +230,29 @@ export default function Home() {
               </button>
             ) : (
               <div className="flex gap-4">
-                <button onClick={toggleListening} disabled={isManabuSpeaking} className={`flex-1 px-6 py-5 rounded-2xl font-black text-white shadow-xl ${isManabuSpeaking ? "bg-slate-300 shadow-none cursor-not-allowed" : isListening ? "bg-amber-500 shadow-amber-100 hover:bg-amber-600" : "bg-blue-600 shadow-blue-100 hover:bg-blue-700"} transition-all active:scale-95`}>
-                  {isManabuSpeaking ? "マナブ君が発言中..." : isListening ? "一時停止" : "説明を再開"}
+                {/* 💡 評価中(isFinishing)はボタンをロック */}
+                <button 
+                  onClick={toggleListening} 
+                  disabled={isManabuSpeaking || isFinishing} 
+                  className={`flex-1 px-6 py-5 rounded-2xl font-black text-white shadow-xl transition-all active:scale-95 ${
+                    (isManabuSpeaking || isFinishing)
+                      ? "bg-slate-300 shadow-none cursor-not-allowed" 
+                      : isListening ? "bg-amber-500 shadow-amber-100 hover:bg-amber-600" : "bg-blue-600 shadow-blue-100 hover:bg-blue-700"
+                  }`}
+                >
+                  {isManabuSpeaking ? "マナブ君が発言中..." : isFinishing ? "待機中..." : isListening ? "一時停止" : "説明を再開"}
                 </button>
-                <button onClick={handleFinish} className="flex-1 px-6 py-5 bg-slate-900 text-white rounded-2xl font-black shadow-xl shadow-slate-200 hover:bg-black transition-all active:scale-95">
-                  評価ノートへ
+                
+                {/* 💡 くるくるアイコンを追加し、連打を防止 */}
+                <button 
+                  onClick={handleFinish} 
+                  disabled={isFinishing} 
+                  className={`flex-1 px-6 py-5 bg-slate-900 text-white rounded-2xl font-black shadow-xl shadow-slate-200 transition-all flex items-center justify-center gap-2 ${
+                    isFinishing ? "opacity-70 cursor-wait" : "hover:bg-black active:scale-95"
+                  }`}
+                >
+                  {isFinishing && <Loader2 className="w-5 h-5 animate-spin" />}
+                  {isFinishing ? "マナブが書込中..." : "評価ノートへ"}
                 </button>
               </div>
             )}
@@ -262,14 +275,15 @@ export default function Home() {
         </h2>
         <textarea 
           value={memoText} 
+          disabled={isFinishing} // 評価中はメモもロック
           onChange={(e) => { if (e.target.value.length <= MAX_MEMO_LENGTH) setMemoText(e.target.value); }} 
-          placeholder="説明中に「あ、これ言い忘れた！」と思ったことを自由にメモしてください。マナブ君が評価に反映します。" 
-          className="flex-1 p-4 border-none rounded-2xl resize-none bg-white text-sm leading-relaxed focus:ring-4 focus:ring-blue-100 outline-none shadow-sm placeholder:text-slate-300 font-medium" 
+          placeholder="説明中に「あ、これ言い忘れた！」と思ったことをメモしてください。" 
+          className="flex-1 p-4 border-none rounded-2xl resize-none bg-white text-sm leading-relaxed focus:ring-4 focus:ring-blue-100 outline-none shadow-sm placeholder:text-slate-300 font-medium disabled:bg-slate-50 disabled:text-slate-400" 
         />
         <div className="mt-4 p-3 rounded-xl bg-blue-50/50 border border-blue-100">
           <p className="text-[10px] text-blue-500/80 leading-tight flex items-center gap-1.5 font-bold">
             <ShieldCheck className="w-3.5 h-3.5" /> 
-            安全な入力保護：HTMLタグは自動的にエスケープされ、セッション終了後にデータは破棄されます。
+            安全な入力保護：HTMLタグは自動的にエスケープされます。
           </p>
         </div>
       </aside>
