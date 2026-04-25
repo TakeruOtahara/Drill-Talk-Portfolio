@@ -6,6 +6,7 @@ import logging
 import sys
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from logic import GeminiProvider
+from prompts import STATIC_BACKCHANNELS  # 💡 安全な相槌セットをインポート
 
 # ==========================================
 # 💡 構造化ロギングの設定
@@ -43,14 +44,18 @@ async def websocket_endpoint(websocket: WebSocket):
             if data_type == "PING":
                 continue
 
-            # 💡 【① 記憶の同期】localStorage からの復旧
+            # 💡 【① 記憶の同期】
             if data_type == "SYNC_SESSION":
                 payload = message.get("payload", {})
                 state["lecture_history"] = payload.get("lecture_history", [])
                 state["structured_original"] = payload.get("structured_original", {})
                 state["original_text"] = payload.get("original_text", "")
+                state["chars_since_last_question"] = payload.get("chars_count", 0)
                 
-                logger.info(f"🧠 記憶同期：履歴 {len(state['lecture_history'])} 件を復旧しました。")
+                # 💡 ログを詳細化：原本が復旧したか一目で分かるように
+                has_material = "あり" if state["original_text"] else "なし"
+                logger.info(f"🧠 記憶同期成功：教材データ[{has_material}] / 会話履歴[{len(state['lecture_history'])}件] を復旧。")
+                
                 await websocket.send_json({"type": "SESSION_SYNCED"})
                 continue
 
@@ -58,25 +63,26 @@ async def websocket_endpoint(websocket: WebSocket):
             if data_type == "INIT_MATERIAL":
                 images_base64 = message.get("images_base64", [])
                 if not isinstance(images_base64, list) or len(images_base64) > 5:
-                    logger.warning("⚠️ 画像枚数制限（5枚）を超過したリクエストを受信しました。")
+                    logger.warning("⚠️ 画像枚数制限超過")
                     await websocket.send_json({"type": "ERROR", "message": "画像は最大5枚までです。"})
                     continue
                 
                 try:
+                    logger.info("📸 教材の解析を開始します...")
                     image_bytes_list = []
                     for img in images_base64:
                         if "," in img: img = img.split(",")[1]
                         image_bytes_list.append(base64.b64decode(img))
                     
-                    logger.info(f"📸 {len(image_bytes_list)} 枚の画像を解析中...")
+                    # logic.py のガードレールを通す
                     original, structured = await ai_brain.process_initial_material(image_bytes_list)
                     
-                    # 💡 【堅牢性】パース失敗時のハンドリング
-                    if not original or not structured:
-                        logger.warning("⚠️ Geminiの出力解析に失敗しました（JSON不正）。")
+                    # 💡 解析失敗時のハンドリング
+                    if original is None or structured is None:
+                        logger.error("⚠️ Geminiの出力解析に失敗しました。")
                         await websocket.send_json({
                             "type": "ERROR", 
-                            "message": "教材がうまく読み取れなかったみたい...もう一度、写真を撮り直してくれる？"
+                            "message": "解析に失敗しました。もう一度『開始』をタップしてみてください！"
                         })
                         continue
 
@@ -92,7 +98,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 except Exception as e:
                     logger.error(f"❌ INIT_MATERIAL で例外発生: {e}", exc_info=True)
-                    await websocket.send_json({"type": "ERROR", "message": "教材の解析中にエラーが発生しました。"})
+                    await websocket.send_json({"type": "ERROR", "message": "通信が一時的に不安定になりました。"})
 
             # 💡 【③ リアルタイム対話ロジック】
             elif data_type == "USER_TALK":
@@ -104,31 +110,37 @@ async def websocket_endpoint(websocket: WebSocket):
                     state["chars_since_last_question"] += len(user_text)
                     
                     if not skip_reaction:
-                        # 30%の確率でマナブ君が質問する
+                        # 30%の確率で質問生成
                         if state["chars_since_last_question"] >= 50 and random.random() < 0.3:
-                            logger.info(f"🤔 質問生成開始（累積文字数: {state['chars_since_last_question']}）")
+                            logger.info(f"🤔 質問生成開始")
                             question = await ai_brain.generate_student_question(
                                 " ".join(state["lecture_history"]), 
                                 state["structured_original"]
                             )
                             state["chars_since_last_question"] = 0
-                            await websocket.send_json({"type": "STUDENT_QUESTION", "message": question})
-                        else:
-                            # 確率で相槌を打つ
-                            aizuchi_text = ""
-                            if random.random() < 0.5:
-                                aizuchi_text = random.choice(["はい！", "なるほど", "うんうん", "そうなんですね", "おもしろいです！"])
+                            
+                            # 💡 質問時は「confused（教えて？）」の表情を固定して送る
+                            await websocket.send_json({
+                                "type": "STUDENT_QUESTION", 
+                                "message": question,
+                                "emotion": "confused"
+                            })
+                        
+                        # 50%の確率で相槌
+                        elif random.random() < 0.5:
+                            # 💡 prompts.py で定義した表情セットからランダム選択（情緒を安定させる）
+                            reaction = random.choice(STATIC_BACKCHANNELS)
                             
                             await websocket.send_json({
                                 "type": "REACTION",
-                                "emotion": random.choice(["happy", "neutral", "excited"]),
-                                "message": aizuchi_text
+                                "emotion": reaction["emotion"],
+                                "message": reaction["text"]
                             })
 
             # 💡 【④ 最終評価】
             elif data_type == "FINISH_LECTURE":
                 user_memo = message.get("user_memo", "")
-                logger.info(f"📥 最終評価リクエストを受信（履歴: {len(state['lecture_history'])} 件）")
+                logger.info(f"📥 最終評価リクエストを受信")
                 try:
                     result = await ai_brain.generate_final_note(
                         state["lecture_history"],
@@ -142,9 +154,8 @@ async def websocket_endpoint(websocket: WebSocket):
                         "missing_points": result["missing_points"],
                         "misconceptions": result["misconceptions"]
                     })
-                    logger.info("📝 最終評価ノートの生成に成功しました。")
                 except Exception as e:
-                    logger.error(f"❌ FINISH_LECTURE で例外発生: {e}", exc_info=True)
+                    logger.error(f"❌ FINISH_LECTURE 例外: {e}", exc_info=True)
                     await websocket.send_json({"type": "ERROR", "message": "評価ノートの作成に失敗しました。"})
 
             # 💡 【⑤ セッションリセット】

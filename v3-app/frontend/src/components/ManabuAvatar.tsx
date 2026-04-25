@@ -14,23 +14,24 @@ export const ManabuAvatar = ({
 }: ManabuAvatarProps) => {
   return (
     <div className={`relative flex flex-col items-center ${className}`}>
-      {/* 💡 全体のアニメーション設定 */}
+      {/* 💡 全体のアニメーション：頷きを深く、テンポを速めてブースト */}
       <motion.div
         animate={
           isListening 
             ? { 
-                // 💡 頷きのアニメーション: 縦に少し深く、ゆっくり沈んで戻る
-                y: [0, 6, 0], 
-                scaleY: [1, 0.98, 1], // わずかに潰れることで「もちもち感」を出す
+                // 頷き：15px沈み込み、7%潰れる（もちもち感を最大化）
+                y: [0, 15, 0], 
+                scaleY: [1, 0.93, 1], 
               } 
             : { 
-                // 通常時の待機モーション（ごくわずかな浮遊）
-                y: [0, -3, 0] 
+                // 待機：ゆったりとした浮遊
+                y: [0, -3, 0],
+                scaleY: [1, 1, 1]
               }
         }
         transition={
           isListening
-            ? { duration: 1.2, repeat: Infinity, ease: "easeInOut" } // 頷きはゆったりと
+            ? { duration: 0.8, repeat: Infinity, ease: "easeInOut" } 
             : { duration: 3, repeat: Infinity, ease: "easeInOut" }
         }
         className="relative"
@@ -40,27 +41,27 @@ export const ManabuAvatar = ({
           className="w-full h-auto drop-shadow-2xl"
           xmlns="http://www.w3.org/2000/svg"
         >
-          {/* --- 影（体の動きに合わせて伸縮） --- */}
+          {/* --- 影：体の沈み込みに合わせて濃く広く --- */}
           <motion.ellipse 
             cx="100" cy="185" rx="50" ry="10" 
             fill="rgba(0,0,0,0.1)"
-            animate={isListening ? { rx: [50, 55, 50], opacity: [0.1, 0.15, 0.1] } : {}}
-            transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+            animate={isListening ? { rx: [50, 65, 50], opacity: [0.1, 0.25, 0.1] } : {}}
+            transition={isListening ? { duration: 0.8, repeat: Infinity, ease: "easeInOut" } : { duration: 3, repeat: Infinity }}
           />
 
           {/* --- 体・顔のベース --- */}
-          <motion.path
+          <path
             d="M50 80 C50 40, 150 40, 150 80 L155 130 C155 160, 130 180, 100 180 C70 180, 45 160, 45 130 Z"
             fill="#FFF9F0"
             stroke="#4A3428"
             strokeWidth="4"
           />
 
-          {/* --- 髪 --- */}
+          {/* --- 髪：オレンジ色のツンツン髪 --- */}
           <path d="M70 45 C60 20, 90 25, 100 40 C110 20, 140 25, 130 45" fill="#FFB74D" stroke="#4A3428" strokeWidth="4" strokeLinecap="round" />
           <path d="M100 40 L105 20 Q115 15, 110 25" fill="none" stroke="#4A3428" strokeWidth="3" strokeLinecap="round" />
 
-          {/* --- ほっぺ --- */}
+          {/* --- ほっぺ：感情に合わせて赤らむ --- */}
           <motion.circle
             cx="65" cy="125" r="10" fill="#FFCDD2" opacity="0.6"
             animate={emotion === 'happy' || emotion === 'excited' ? { scale: [1, 1.3, 1], opacity: 0.8 } : {}}
@@ -72,7 +73,7 @@ export const ManabuAvatar = ({
             transition={{ duration: 1.5, repeat: Infinity }}
           />
 
-          {/* --- 目 --- */}
+          {/* --- 目：瞬きアニメーション付き --- */}
           <g transform="translate(80, 105)">
             <motion.circle
               r="10" fill="#4A3428"
@@ -91,7 +92,7 @@ export const ManabuAvatar = ({
             <circle cx="-3" cy="-3" r="3" fill="white" />
           </g>
 
-          {/* --- 口 --- */}
+          {/* --- 口：感情ごとの切り替え --- */}
           <motion.g transform="translate(100, 145)">
             {emotion === 'happy' && (
               <path d="M-10 -5 Q0 10, 10 -5" fill="none" stroke="#4A3428" strokeWidth="4" strokeLinecap="round" />
@@ -107,20 +108,20 @@ export const ManabuAvatar = ({
             )}
           </motion.g>
 
-          {/* --- 小さな手 --- */}
+          {/* --- 小さな手：頷きに合わせてバタバタ動く --- */}
           <motion.path
             d="M40 130 Q30 140, 45 150" fill="none" stroke="#4A3428" strokeWidth="4" strokeLinecap="round"
-            animate={isListening ? { rotate: [0, -15, 0] } : {}}
-            transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+            animate={isListening ? { rotate: [0, -25, 0] } : {}}
+            transition={{ duration: 0.8, repeat: Infinity, ease: "easeInOut" }}
           />
           <motion.path
             d="M160 130 Q170 140, 155 150" fill="none" stroke="#4A3428" strokeWidth="4" strokeLinecap="round"
-            animate={isListening ? { rotate: [0, 15, 0] } : {}}
-            transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+            animate={isListening ? { rotate: [0, 25, 0] } : {}}
+            transition={{ duration: 0.8, repeat: Infinity, ease: "easeInOut" }}
           />
         </svg>
 
-        {/* --- 名札 --- */}
+        {/* --- 名札：デザインアクセント --- */}
         <div className="absolute bottom-6 bg-white/80 px-3 py-0.5 rounded-full border border-orange-200 text-[10px] font-bold text-orange-400 tracking-widest shadow-sm">
           MANABU
         </div>
