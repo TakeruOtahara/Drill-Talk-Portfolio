@@ -1,6 +1,10 @@
 // --- v3-app/frontend/src/components/NotebookModal.tsx ---
+"use client";
+
 import { motion } from "framer-motion";
 import { Loader2, AlertCircle, CheckCircle2, MessageSquareOff } from "lucide-react";
+import DOMPurify from "dompurify"; // 💡 セキュリティ：XSS対策ライブラリ
+import { useMemo } from "react";
 
 interface NotebookModalProps {
   notebook: string;
@@ -15,8 +19,18 @@ export const NotebookModal = ({
   missingPoints, 
   misconceptions, 
   onRestart, 
-  isRestarting 
+  isRestarting = false 
 }: NotebookModalProps) => {
+  
+  // 🛡️ セキュリティ：AIが生成したHTMLをサニタイズ（浄化）する
+  // useMemoを使うことで、再レンダリングのたびに計算するのを防ぎます
+  const sanitizedHtml = useMemo(() => {
+    if (typeof window !== "undefined") {
+      return DOMPurify.sanitize(notebook);
+    }
+    return notebook; // SSR（サーバーサイド）時はそのまま返す（基本はブラウザで動く）
+  }, [notebook]);
+
   if (!notebook) return null;
 
   return (
@@ -45,7 +59,8 @@ export const NotebookModal = ({
                 backgroundSize: "100% 2rem",
                 lineHeight: "2rem",
               }}
-              dangerouslySetInnerHTML={{ __html: notebook }}
+              // 🛡️ サニタイズ済みのHTMLを安全に流し込む
+              dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
             />
           </section>
 

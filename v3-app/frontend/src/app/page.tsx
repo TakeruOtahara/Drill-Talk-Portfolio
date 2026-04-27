@@ -8,6 +8,7 @@ import { NotebookModal } from "@/components/NotebookModal";
 import { TutorialOverlay } from "@/components/TutorialOverlay";
 import { useRef, useState, useEffect, useCallback } from "react";
 import { RefreshCcw, ShieldCheck, BookOpen, Loader2, MessageSquareText, X } from "lucide-react";
+import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 
 export default function Home() {
   const MAX_FILES = 5; 
@@ -21,10 +22,11 @@ export default function Home() {
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [memoText, setMemoText] = useState("");
   const [isMemoOpen, setIsMemoOpen] = useState(false);
+  const isUserSpeaking = useVoiceActivity(isListeningState);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // エラーハンドラ：解析失敗時に状態を戻す
+  // 💡 エラーハンドラ：解析失敗時に状態を戻す
   const handleLoadError = useCallback(() => {
     setLessonStarted(false);
   }, []);
@@ -39,14 +41,14 @@ export default function Home() {
     sendMessage, speak, cancelSpeak,
     unlockAudio 
   } = useManabu({ 
+    // 💡 Hooks側へマイクの「ON/OFFの意思」を同期
     isListening: isListeningState, 
     onError: handleLoadError 
   });
 
-  // 💡 修正ポイント：useSpeechToText に isManabuSpeaking を渡してエコーバックを防止
   const { isListening, toggleListening } = useSpeechToText(
     (text) => {
-      // 内部ガードにより、マナブの発言中はここが呼ばれない
+      // 🛡️ 内部ガードにより、マナブの発言中や終了処理中は送信しない
       if (isManabuSpeaking || isFinishing) return;
       
       const hasQueuedQuestion = questionQueue.current.length > 0;
@@ -57,33 +59,35 @@ export default function Home() {
 
       if (hasQueuedQuestion) {
         const questionText = questionQueue.current.shift();
-        if (isListening) toggleListening(); 
+        
+        // 🛡️ 【重要修正】手動の toggleListening() は削除。
+        // isManabuSpeaking を true にするだけで hooks が物理的にマイクを一時停止する。
         setIsManabuSpeaking(true);
         if (questionText) {
             speak(questionText, () => {
+                // 🛡️ 喋り終われば hooks が isListening を見て自動でマイクを再開する
                 setIsManabuSpeaking(false);
-                toggleListening(); 
             });
         }
       } else if (!isBackendThinking) {
         setIsBackendThinking(true);
       }
     },
-    // onSpeechStart: 発話開始時にマナブの喋りをキャンセルする
+    // onSpeechStart: ユーザーが喋り始めたらマナブを黙らせる
     () => { 
       if (!isBackendThinking && isListening && !isManabuSpeaking) {
         cancelSpeak(); 
       }
     },
-    undefined,      // onInterimResult (必要であれば追加)
-    isManabuSpeaking // 💡 4つ目の引数として現在の喋り状態を渡す
+    undefined,       // onInterimResult
+    isManabuSpeaking // 🛡️ 第4引数：現在の喋り状態を渡し、エコーバックを物理遮断
   );
 
   // --- Handlers ---
   const handleStartLesson = async () => {
     await unlockAudio(); 
     setLessonStarted(true);
-    toggleListening();
+    toggleListening(); // ユーザーの意思として「ON」にする
   };
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -128,7 +132,7 @@ export default function Home() {
     });
   };
 
-  // --- 💡 ライフサイクル：復旧ロジック ---
+  // --- 💡 ライフサイクル：LocalStorageからの最強復旧 ---
   useEffect(() => {
     const savedStructured = localStorage.getItem("dt_structured");
     const savedOriginal = localStorage.getItem("dt_original");
@@ -156,7 +160,7 @@ export default function Home() {
     setShowTutorial(false);
   };
 
-  // isListening の状態を useManabu 側に同期
+  // 意思としての isListening を state に同期
   useEffect(() => { setIsListeningState(isListening); }, [isListening]);
 
   // 💡 タイマー：毎秒保存してリフレッシュに耐える
@@ -226,6 +230,7 @@ export default function Home() {
 
       <main className="flex-1 flex flex-col items-center justify-center p-4 min-h-screen relative bg-white order-1 lg:order-1">
         
+        {/* ⏲️ タイマー表示 */}
         {lessonStarted && (
           <div className="absolute top-4 lg:top-8 text-4xl lg:text-5xl font-mono font-bold text-slate-300 tracking-tighter">
             {Math.floor(timeLeft/60)}:{(timeLeft%60).toString().padStart(2, "0")}
@@ -237,16 +242,16 @@ export default function Home() {
           <div className="text-center w-48 lg:w-64 flex-shrink-0 animate-in fade-in zoom-in duration-700 relative">
             <ManabuAvatar 
               emotion={isAnalyzing ? "confused" : (isBackendThinking || isFinishing ? "excited" : emotion)} 
-              isListening={isListening && !isBackendThinking && !isManabuSpeaking} 
+              isListening={isUserSpeaking && !isBackendThinking && !isManabuSpeaking}
               className="w-full h-auto drop-shadow-2xl relative z-10" 
             />
             
-            {/* 💡 青い光：ヒアリング中（不透明度30%） */}
+            {/* 💡 青い光（ヒアリング中）：不透明度30% */}
             {isListening && !isBackendThinking && !isManabuSpeaking && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 lg:w-96 lg:h-96 bg-blue-600 rounded-full blur-[60px] opacity-30 animate-pulse z-0"></div>
             )}
             
-            {/* 💡 緑の光：マナブ君発言中（不透明度30%） */}
+            {/* 💡 緑の光（マナブ君発言中）：不透明度30% */}
             {isManabuSpeaking && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 lg:w-96 lg:h-96 bg-emerald-500 rounded-full blur-[60px] opacity-30 animate-pulse z-0"></div>
             )}
@@ -299,7 +304,7 @@ export default function Home() {
         </div>
       </main>
 
-      {/* 📱 モバイル用メモ展開ボタン（lg:hidden） */}
+      {/* 📱 復元：モバイル用メモ展開ボタン（lg:hidden） */}
       {lessonStarted && (
         <button 
           onClick={() => setIsMemoOpen(true)}
@@ -326,7 +331,7 @@ export default function Home() {
           onChange={(e) => {
             const val = e.target.value;
             setMemoText(val);
-            localStorage.setItem("dt_memo", val);
+            localStorage.setItem("dt_memo", val); // 入力のたびに即時保存
           }} 
           placeholder="言い忘れたことをメモしてください。" 
           className="flex-1 p-4 border rounded-2xl resize-none bg-white text-sm focus:ring-4 focus:ring-blue-100 outline-none font-medium disabled:bg-slate-50" 

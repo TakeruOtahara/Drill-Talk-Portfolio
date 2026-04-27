@@ -1,6 +1,33 @@
+// --- v3-app/frontend/src/hooks/useManabu.ts ---
 import { useState, useEffect, useCallback, useRef } from "react";
 
-export const useManabu = ({ isListening, onError }: { isListening: boolean; onError: () => void }) => {
+// 💡 TypeScript用の型定義：これがあることで page.tsx でのエラーが消えます
+interface UseManabuReturn {
+  notebook: string;
+  setNotebook: (val: string) => void;
+  missingPoints: string[];
+  misconceptions: string[];
+  emotion: "happy" | "neutral" | "excited" | "confused";
+  isAnalyzing: boolean;
+  setIsAnalyzing: (val: boolean) => void;
+  isBackendThinking: boolean;
+  setIsBackendThinking: (val: boolean) => void;
+  isManabuSpeaking: boolean;
+  setIsManabuSpeaking: (val: boolean) => void;
+  questionQueue: React.MutableRefObject<string[]>;
+  sendMessage: (type: string, payload: any) => void;
+  speak: (text: string, onEnd?: () => void) => void;
+  cancelSpeak: () => void;
+  unlockAudio: () => Promise<void>;
+}
+
+export const useManabu = ({ 
+  isListening, 
+  onError 
+}: { 
+  isListening: boolean; 
+  onError: () => void 
+}): UseManabuReturn => {
   const [notebook, setNotebook] = useState("");
   const [missingPoints, setMissingPoints] = useState<string[]>([]);
   const [misconceptions, setMisconceptions] = useState<string[]>([]);
@@ -13,10 +40,9 @@ export const useManabu = ({ isListening, onError }: { isListening: boolean; onEr
   
   const questionQueue = useRef<string[]>([]);
   const messageQueue = useRef<string[]>([]);
-  
   const audioContextRef = useRef<AudioContext | null>(null);
 
-  // 🔊 スマホ用：音声システムのロック解除
+  // 🔊 音声ロック解除（スマホ対応）
   const unlockAudio = useCallback(async () => {
     if (typeof window !== "undefined") {
       try {
@@ -24,24 +50,22 @@ export const useManabu = ({ isListening, onError }: { isListening: boolean; onEr
         if (!audioContextRef.current) {
           audioContextRef.current = new AudioContextClass();
         }
-        
         if (audioContextRef.current.state === "suspended") {
           await audioContextRef.current.resume();
         }
-        
         const buffer = audioContextRef.current.createBuffer(1, 1, 22050);
         const source = audioContextRef.current.createBufferSource();
         source.buffer = buffer;
         source.connect(audioContextRef.current.destination);
         source.start(0);
-        
-        console.log("🔊 Audio System Unlocked for Mobile");
+        console.log("🔊 Audio System Unlocked");
       } catch (e) {
         console.error("Audio unlock error:", e);
       }
     }
   }, []);
 
+  // 🗣️ 音声合成（発話）
   const speak = useCallback((text: string, onEnd?: () => void) => {
     if (!("speechSynthesis" in window)) return;
     
@@ -69,20 +93,19 @@ export const useManabu = ({ isListening, onError }: { isListening: boolean; onEr
     setIsManabuSpeaking(false);
   }, []);
 
+  // 📡 WebSocket接続管理
   useEffect(() => {
-    // 💡 起動時に物置(localStorage)から全てのデータを復元
+    // 復元処理
     const savedHistory = localStorage.getItem("dt_history");
     if (savedHistory) setLectureHistory(JSON.parse(savedHistory));
-
     const savedNotebook = localStorage.getItem("dt_notebook");
     if (savedNotebook) setNotebook(savedNotebook);
-
     const savedMissing = localStorage.getItem("dt_missing");
     if (savedMissing) setMissingPoints(JSON.parse(savedMissing));
-
     const savedMisconceptions = localStorage.getItem("dt_misconception");
     if (savedMisconceptions) setMisconceptions(JSON.parse(savedMisconceptions));
 
+    let socketInstance: WebSocket | null = null;
     let pingInterval: NodeJS.Timeout | null = null;
     let reconnectTimeout: NodeJS.Timeout | null = null;
 
@@ -91,28 +114,30 @@ export const useManabu = ({ isListening, onError }: { isListening: boolean; onEr
       const host = process.env.NEXT_PUBLIC_WS_URL || window.location.host;
       const wsUrl = `${protocol}//${host}/ws/manabu`;
 
-      console.log(`📡 Attempting connection to: ${wsUrl}`);
       const ws = new WebSocket(wsUrl);
+      socketInstance = ws;
 
       ws.onopen = () => {
-        console.log("🚀 WebSocket Connected");
         setSocket(ws);
-        
-        const history = localStorage.getItem("dt_history");
-        const structured = localStorage.getItem("dt_structured");
-        const original = localStorage.getItem("dt_original");
+        const historyStr = localStorage.getItem("dt_history");
+        const structuredStr = localStorage.getItem("dt_structured");
+        const originalStr = localStorage.getItem("dt_original");
 
-        if (history || structured || original) {
-          ws.send(JSON.stringify({
-            type: "SYNC_SESSION",
-            payload: {
-              lecture_history: history ? JSON.parse(history) : [],
-              structured_original: structured ? JSON.parse(structured) : {},
-              original_text: original || ""
-            }
-          }));
-        }
+        const history = historyStr ? JSON.parse(historyStr) : [];
+        const structured = structuredStr ? JSON.parse(structuredStr) : {};
 
+        // セッション同期
+        ws.send(JSON.stringify({
+          type: "SYNC_SESSION",
+          payload: {
+            lecture_history: history,
+            structured_original: structured,
+            original_text: originalStr || "",
+            chars_count: history.join("").length
+          }
+        }));
+
+        // 未送信キューの処理
         while (messageQueue.current.length > 0) {
           ws.send(messageQueue.current.shift()!);
         }
@@ -124,11 +149,10 @@ export const useManabu = ({ isListening, onError }: { isListening: boolean; onEr
         }, 30000);
       };
 
-      ws.onmessage = (event) => {
+      ws.onmessage = (event: MessageEvent) => {
         const data = JSON.parse(event.data);
 
         if (data.type === "ERROR") {
-          console.error("🚨 Backend Error:", data.message);
           setIsAnalyzing(false);
           setIsBackendThinking(false);
           setIsManabuSpeaking(false);
@@ -152,22 +176,17 @@ export const useManabu = ({ isListening, onError }: { isListening: boolean; onEr
           setIsBackendThinking(false);
         }
         if (data.type === "FINAL_NOTE") {
-          // 💡 状態を更新
           setNotebook(data.notebook);
           setMissingPoints(data.missing_points);
           setMisconceptions(data.misconceptions);
-
-          // 💡 物置(localStorage)に保存
           localStorage.setItem("dt_notebook", data.notebook);
           localStorage.setItem("dt_missing", JSON.stringify(data.missing_points));
           localStorage.setItem("dt_misconception", JSON.stringify(data.misconceptions));
-          
           setIsBackendThinking(false);
         }
       };
 
       ws.onclose = () => {
-        console.log("❌ WebSocket Closed. Reconnecting...");
         setSocket(null);
         if (pingInterval) clearInterval(pingInterval);
         reconnectTimeout = setTimeout(connect, 5000);
@@ -179,27 +198,32 @@ export const useManabu = ({ isListening, onError }: { isListening: boolean; onEr
     };
 
     connect();
+
     return () => {
       if (pingInterval) clearInterval(pingInterval);
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      setSocket((prev) => { prev?.close(); return null; });
+      if (socketInstance) {
+        socketInstance.onclose = null; // 再接続ループを停止
+        socketInstance.close();
+      }
     };
   }, [speak, onError]);
 
+  // ✉️ メッセージ送信ロジック
   const sendMessage = useCallback((type: string, payload: any) => {
     if (type === "USER_TALK") {
-      const newHistory = [...lectureHistory, payload.text];
-      setLectureHistory(newHistory);
-      localStorage.setItem("dt_history", JSON.stringify(newHistory));
+      setLectureHistory(prev => {
+        const newHistory = [...prev, payload.text];
+        localStorage.setItem("dt_history", JSON.stringify(newHistory));
+        return newHistory;
+      });
     }
 
     if (type === "RESTART_LECTURE" || type === "RESTART_SESSION") {
-      // 💡 レッスンやり直し時は物置を掃除する
       localStorage.removeItem("dt_history");
       localStorage.removeItem("dt_notebook");
       localStorage.removeItem("dt_missing");
       localStorage.removeItem("dt_misconception");
-      
       setLectureHistory([]);
       setNotebook("");
       setMissingPoints([]);
@@ -210,10 +234,9 @@ export const useManabu = ({ isListening, onError }: { isListening: boolean; onEr
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(message);
     } else {
-      console.warn("⚠️ WebSocket not open. Queuing message.");
       messageQueue.current.push(message);
     }
-  }, [socket, lectureHistory]);
+  }, [socket]);
 
   return { 
     notebook, setNotebook, missingPoints, misconceptions, 
