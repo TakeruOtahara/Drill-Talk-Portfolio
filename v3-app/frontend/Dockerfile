@@ -10,6 +10,15 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
+
+# 🛡️ 直書きは一切しない。器（ARG）だけ用意する
+ARG NEXT_PUBLIC_DRILLTALK_API_KEY
+ARG NEXT_PUBLIC_WS_URL
+
+# 💡 これをセットすることで、次の npm run build が値を拾えるようになる
+ENV NEXT_PUBLIC_DRILLTALK_API_KEY=$NEXT_PUBLIC_DRILLTALK_API_KEY
+ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+
 RUN npm run build
 
 

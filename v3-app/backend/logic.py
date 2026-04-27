@@ -1,9 +1,9 @@
 # --- v3-app/backend/logic.py ---
-import os
 import json
 import asyncio
 import random
 import logging
+# 🛡️ os は不要になったので完全に削除。すべて config.settings が引き受ける。
 from google import genai
 from google.genai import types
 from prompts import (
@@ -11,17 +11,17 @@ from prompts import (
     FINAL_NOTEBOOK_PROMPT, 
     STUDENT_QUESTION_PROMPT
 )
+from config import settings  # 💡 プロキシ設定をインポート
 
 # 💡 ロガーの設定
 logger = logging.getLogger("drilltalk.logic")
 
 class GeminiProvider:
     def __init__(self):
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY が .env に設定されていません。")
-        
-        self.client = genai.Client(api_key=api_key)
+        # 🛡️ os.getenv ではなく settings から取得
+        # config.py 側でバリデーション済みなので、ここでの個別チェックは不要。
+        self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        # 有機化学専攻の君が教えてくれた通り、最新の flash モデルを固定
         self.model_id = "gemini-2.5-flash" 
 
     def _clean_json_string(self, raw_text: str) -> str:
@@ -62,6 +62,7 @@ class GeminiProvider:
                 return response
             except Exception as e:
                 error_str = str(e)
+                # 429(Rate Limit) や 503(Overloaded) の場合はリトライ
                 is_throttled = "503" in error_str or "429" in error_str
 
                 if is_throttled and i < max_retries:
@@ -95,7 +96,7 @@ class GeminiProvider:
             # 揺らぎを吸収
             data = self._ensure_dict(raw_data)
             
-            # original_text または structured_original が欠落している場合も異常とみなす
+            # キーの存在チェック
             if "original_text" not in data or "structured_original" not in data:
                 raise ValueError("必要なキー(original_text/structured_original)がJSONに含まれていません。")
 
@@ -103,7 +104,6 @@ class GeminiProvider:
         
         except Exception as e:
             logger.warning(f"⚠️ [INIT_MATERIAL] 処理中断: {str(e)}")
-            # None を返すことで main.py 側の ERROR 送信ロジックを動かす
             return None, None
 
     async def generate_student_question(self, all_user_text, structured_original):
@@ -116,7 +116,6 @@ class GeminiProvider:
         """原本・ログ・メモの3点を照合し、客観的なメタ認知分析を行う"""
         all_user_text = " ".join(lecture_history)
         
-        # prompts.py の命令文と動的なデータを結合
         prompt = (
             f"{FINAL_NOTEBOOK_PROMPT}\n\n"
             f"【教材の原本】\n{original_text}\n\n"
@@ -133,7 +132,6 @@ class GeminiProvider:
             cleaned_text = self._clean_json_string(response.text)
             raw_data = json.loads(cleaned_text)
             
-            # リスト形式をガード
             data = self._ensure_dict(raw_data)
             
             return {

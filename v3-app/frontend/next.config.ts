@@ -9,13 +9,14 @@ const nextConfig: NextConfig = {
 
   // 💡 スマホ（ngrok）からの WebSocket 通信をバックエンドに転送する設定
   async rewrites() {
+    // 💡 環境変数があればそれを使用し、なければデフォルトで Docker 内部用URLを使う
+    const backendUrl = process.env.BACKEND_INTERNAL_URL || 'http://backend:8000';
+
     return [
       {
-        // フロントエンドへの /ws/... へのアクセスを、バックエンド(8000番)へ転送
         source: '/ws/:path*',
-        // Docker Compose を使用している場合は 'http://backend:8000/ws/:path*'
-        // ローカル実行の場合は 'http://127.0.0.1:8000/ws/:path*'
-        destination: 'http://backend:8000/ws/:path*',
+        // 🛡️ ハードコードを排除し、変数化
+        destination: `${backendUrl}/ws/:path*`,
       },
     ];
   },

@@ -112,7 +112,10 @@ export const useManabu = ({
     const connect = () => {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const host = process.env.NEXT_PUBLIC_WS_URL || window.location.host;
-      const wsUrl = `${protocol}//${host}/ws/manabu`;
+      // 🛡️ 環境変数からAPI Keyを取得
+      const apiKey = process.env.NEXT_PUBLIC_DRILLTALK_API_KEY;
+      // URLにクエリパラメータとして付与
+      const wsUrl = `ws://${process.env.NEXT_PUBLIC_WS_URL}/ws/manabu?api_key=${apiKey}`;
 
       const ws = new WebSocket(wsUrl);
       socketInstance = ws;
