@@ -6,6 +6,7 @@ import { useSpeechToText } from "@/hooks/useSpeechToText";
 import { ManabuAvatar } from "@/components/ManabuAvatar";
 import { NotebookModal } from "@/components/NotebookModal";
 import { TutorialOverlay } from "@/components/TutorialOverlay";
+import { SquirrelLoader } from "@/components/SquirrelLoader"; // 💡 追加
 import { useRef, useState, useEffect, useCallback } from "react";
 import { RefreshCcw, ShieldCheck, BookOpen, Loader2, MessageSquareText, X } from "lucide-react";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
@@ -60,8 +61,7 @@ export default function Home() {
       if (hasQueuedQuestion) {
         const questionText = questionQueue.current.shift();
         
-        // 🛡️ 【重要修正】手動の toggleListening() は削除。
-        // isManabuSpeaking を true にするだけで hooks が物理的にマイクを一時停止する。
+        // 🛡️ isManabuSpeaking を true にするだけで hooks が物理的にマイクを一時停止する。
         setIsManabuSpeaking(true);
         if (questionText) {
             speak(questionText, () => {
@@ -246,12 +246,12 @@ export default function Home() {
               className="w-full h-auto drop-shadow-2xl relative z-10" 
             />
             
-            {/* 💡 青い光（ヒアリング中）：不透明度30% */}
+            {/* 💡 青い光（ヒアリング中） */}
             {isListening && !isBackendThinking && !isManabuSpeaking && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 lg:w-96 lg:h-96 bg-blue-600 rounded-full blur-[60px] opacity-30 animate-pulse z-0"></div>
             )}
             
-            {/* 💡 緑の光（マナブ君発言中）：不透明度30% */}
+            {/* 💡 緑の光（マナブ君発言中） */}
             {isManabuSpeaking && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 lg:w-96 lg:h-96 bg-emerald-500 rounded-full blur-[60px] opacity-30 animate-pulse z-0"></div>
             )}
@@ -266,9 +266,16 @@ export default function Home() {
                 </button>
               </>
             ) : !lessonStarted ? (
-              <button disabled={isAnalyzing} onClick={handleStartLesson} className="px-10 py-5 bg-blue-600 text-white rounded-2xl font-black text-lg shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all disabled:opacity-50 active:scale-95">
-                {isAnalyzing ? "マナブ君が読み込み中..." : "準備OK！特訓開始"}
-              </button>
+              <div className="relative w-full inline-flex justify-center">
+                <SquirrelLoader isVisible={isAnalyzing} message="マナブが原本を解読中..." />
+                <button 
+                  disabled={isAnalyzing} 
+                  onClick={handleStartLesson} 
+                  className="relative z-10 w-full px-10 py-5 bg-blue-600 text-white rounded-2xl font-black text-lg shadow-xl shadow-blue-200 hover:bg-blue-700 transition-all disabled:opacity-50 active:scale-95"
+                >
+                  {isAnalyzing ? "マナブ君が読み込み中..." : "準備OK！特訓開始"}
+                </button>
+              </div>
             ) : (
               <div className="flex flex-col sm:flex-row gap-4">
                 <button 
@@ -282,16 +289,19 @@ export default function Home() {
                 >
                   {isManabuSpeaking ? "マナブ君が発言中..." : isFinishing ? "待機中..." : isListening ? "一時停止" : "説明を再開"}
                 </button>
-                <button 
-                  onClick={handleFinish} 
-                  disabled={isFinishing} 
-                  className={`flex-1 px-6 py-5 bg-slate-900 text-white rounded-2xl font-black shadow-xl transition-all flex items-center justify-center gap-2 ${
-                    isFinishing ? "opacity-70 cursor-wait" : "active:scale-95"
-                  }`}
-                >
-                  {isFinishing && <Loader2 className="w-5 h-5 animate-spin" />}
-                  {isFinishing ? "書込中..." : "評価ノートへ"}
-                </button>
+                <div className="relative flex-1 flex justify-center">
+                  <SquirrelLoader isVisible={isFinishing} message="ノートを作成中..." />
+                  <button 
+                    onClick={handleFinish} 
+                    disabled={isFinishing} 
+                    className={`relative z-10 w-full px-6 py-5 bg-slate-900 text-white rounded-2xl font-black shadow-xl transition-all flex items-center justify-center gap-2 ${
+                      isFinishing ? "opacity-70 cursor-wait" : "active:scale-95"
+                    }`}
+                  >
+                    {isFinishing && <Loader2 className="w-5 h-5 animate-spin" />}
+                    {isFinishing ? "書込中..." : "評価ノートへ"}
+                  </button>
+                </div>
               </div>
             )}
             
@@ -304,7 +314,7 @@ export default function Home() {
         </div>
       </main>
 
-      {/* 📱 復元：モバイル用メモ展開ボタン（lg:hidden） */}
+      {/* 📱 モバイル用メモ展開ボタン */}
       {lessonStarted && (
         <button 
           onClick={() => setIsMemoOpen(true)}
@@ -331,7 +341,7 @@ export default function Home() {
           onChange={(e) => {
             const val = e.target.value;
             setMemoText(val);
-            localStorage.setItem("dt_memo", val); // 入力のたびに即時保存
+            localStorage.setItem("dt_memo", val);
           }} 
           placeholder="言い忘れたことをメモしてください。" 
           className="flex-1 p-4 border rounded-2xl resize-none bg-white text-sm focus:ring-4 focus:ring-blue-100 outline-none font-medium disabled:bg-slate-50" 

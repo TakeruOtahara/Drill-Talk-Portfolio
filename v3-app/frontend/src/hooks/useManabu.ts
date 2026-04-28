@@ -115,7 +115,7 @@ export const useManabu = ({
       // 🛡️ 環境変数からAPI Keyを取得
       const apiKey = process.env.NEXT_PUBLIC_DRILLTALK_API_KEY;
       // URLにクエリパラメータとして付与
-      const wsUrl = `ws://${process.env.NEXT_PUBLIC_WS_URL}/ws/manabu?api_key=${apiKey}`;
+      const wsUrl = `${protocol}//${process.env.NEXT_PUBLIC_WS_URL}/ws/manabu?api_key=${apiKey}`;
 
       const ws = new WebSocket(wsUrl);
       socketInstance = ws;
@@ -191,6 +191,8 @@ export const useManabu = ({
 
       ws.onclose = () => {
         setSocket(null);
+        setIsAnalyzing(false);       // 💡 リスを強制停止
+        setIsBackendThinking(false); // 💡 リスを強制停止
         if (pingInterval) clearInterval(pingInterval);
         reconnectTimeout = setTimeout(connect, 5000);
       };
