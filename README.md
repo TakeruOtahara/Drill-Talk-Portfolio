@@ -2,11 +2,11 @@
 ```mermaid
 graph TD
     subgraph Client [フロントエンド / Next.js 16]
-        UI[React / Tailwind CSS<br>Framer Motion (Squirrel/Avatar)]
+        UI[React / Tailwind CSS<br>Framer Motion]
         VAD[Voice Activity Detection<br>AudioContext / SpeechToText]
         Storage[(LocalStorage<br>セッション復元)]
         
-        VAD <-->|マイク制御/エコー防止| UI
+        VAD <-->|マイク制御とエコー防止| UI
         Storage -.->|マウント時同期| UI
     end
 
@@ -27,9 +27,9 @@ graph TD
         LLM[Google Gemini 2.5 Flash API<br>メタ認知・4要素抽出]
     end
 
-    Client <-->|WebSocket (wss://)| APIM
+    Client <-->|WebSocket wss| APIM
     APIM <-->|通信トラフィック保護| Server
-    Logic <-->|REST API (非同期)| LLM
+    Logic <-->|REST API 非同期| LLM
 
     classDef client fill:#e0f2fe,stroke:#2563eb,stroke-width:2px,color:#0f172a;
     classDef gatekeeper fill:#fecaca,stroke:#ef4444,stroke-width:2px,color:#0f172a;
@@ -76,9 +76,9 @@ sequenceDiagram
         B->>G: ログと教材の差分から質問生成
         G-->>B: 質問文
         B-->>F: STUDENT_QUESTION (質問文)
-        F->>F: STT(マイク)を強制一時停止
+        F->>F: STTマイクを強制一時停止
         F-->>U: 音声発話 & SquirrelLoader 非表示
-        F->>F: 発話終了後、STT(マイク)自動再開
+        F->>F: 発話終了後、STTマイク自動再開
     end
 
     Note over U, G: 【フェーズ3：最終評価（メタ認知）】
@@ -89,7 +89,7 @@ sequenceDiagram
     G-->>B: 評価ノート生成 (リカバリー/ブラインドスポット分類)
     B-->>F: FINAL_NOTE (HTML / 勘違い / 漏れ)
     F->>F: DOMPurifyでサニタイズ
-    F-->>U: 復習ノート(Modal)表示 & SquirrelLoader 非表示
+    F-->>U: 復習ノートModal表示 & SquirrelLoader 非表示
 ```
 Azure デプロイメント構成図（Azure Infrastructure）
 ```mermaid
@@ -98,10 +98,10 @@ graph LR
         Dev[Local PC<br>Docker Compose]
     end
 
-    subgraph Azure Cloud [Microsoft Azure]
+    subgraph AzureCloud [Microsoft Azure]
         ACR[Azure Container Registry<br>コンテナ保管庫]
         
-        subgraph Security Zone [セキュアネットワーク]
+        subgraph SecurityZone [セキュアネットワーク]
             APIM[Azure API Management<br>レート制限 / IPフィルタリング]
             ACA[Azure App Service<br>Web App for Containers]
             APIM -->|アクセス許可IPのみ| ACA
@@ -115,11 +115,11 @@ graph LR
     ACA -.->|ログ出力| Monitor
 
     User((ユーザー)) -->|HTTPS / WSS| APIM
-    User -.->|直接アクセス (拒否)| ACA
+    User -.->|直接アクセス拒否| ACA
 
     classDef azure fill:#bfdbfe,stroke:#0284c7,stroke-width:2px,color:#0f172a;
     classDef secure fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#0f172a,stroke-dasharray: 5 5;
     
     class ACR,APIM,ACA,Monitor azure;
-    class Security Zone secure;
+    class SecurityZone secure;
 ```
