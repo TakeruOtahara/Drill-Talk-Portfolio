@@ -549,6 +549,57 @@ const startLesson = async () => {
 実装済み
 
 
+🔹 v1: 概念実証（PoC）フェーズ
+【技術スタック】 Python, Streamlit, gTTS
+
+設計: フロントエンドとバックエンドが単一のファイルに混在するモノリス構造。
+
+通信: HTTPベースのポーリングと、アクション毎の画面全体リロード。
+
+課題: * 音声対話のたびにStreamlitの再描画（Rerun）が走り、UX（レスポンス速度）に限界があった。
+
+gTTS による音声合成が遅く、リアルタイム性に欠けていた。
+
+チャットとドリルのロジックが密結合しており、拡張性が低かった。
+
+🔹 v2: 責務分離とリアルタイム化フェーズ
+【技術スタック】 Next.js (React), FastAPI, WebSocket, edge-tts
+
+設計: クライアント（UI）とサーバー（API）を完全に分離したモダンなWebアプリケーション構成へと刷新。
+
+通信: FastAPI と Next.js 間を WebSocket で接続し、双方向のリアルタイム通信を実現。
+
+UI/UX: Reactの状態管理（useState, useEffect）を活用し、コンポーネント単位（Classroom, DrillMode, MicButton）での再描画に限定。シームレスな画面遷移を実現。
+
+音声: edge-tts の非同期ストリーミング処理を導入し、AIの音声応答速度を劇的に改善。
+
+課題:
+
+音声認識（STT）とAIの音声再生が被った際のエコーバック（AIの声をユーザーのマイクが拾ってしまう問題）が未解決。
+
+エラーハンドリング（APIの一時的な不具合など）への堅牢性が不足。
+
+🔹 v3: メタ認知AIと堅牢性（本番環境想定）フェーズ【現在の完成版】
+【技術スタック】 Next.js, FastAPI, Docker, Pydantic, Framer Motion, VAD制御
+
+AIロジックのブレイクスルー（メタ認知評価）:
+単なる「チャットボット」から脱却。「教材の4要素抽出」「ユーザーの5分間の発話ログ」「ユーザー自身の忘れたことメモ」の3点をGemini APIでクロスチェックし、【リカバリー】【ブラインドスポット】を客観的に指摘する高度な教育アルゴリズムを実装。
+
+UXと音声制御の極致（VADの導入）:
+AudioContext を用いた VAD (Voice Activity Detection) を自作実装。マナブ君（AI）が喋り始めた瞬間にマイク入力を物理的（abort()）に遮断し、エコーバックを完全に防止。
+
+UIの洗練:
+Framer Motion を導入し、通信状態やマイクの音量に連動してリアルタイムに動くSVGアバター（マナブ君）と、状態遷移を示す SquirrelLoader（リスのUI）を実装。ユーザーの待ち時間のストレスをゼロに。
+
+エンタープライズ級の堅牢性:
+
+Pydantic を用いた環境変数（CORS設定やAPIキー）の厳格なバリデーション。
+
+インフラ起因のエラー（429 Rate Limit や 503 Overloaded）に対する「指数バックオフ（Exponential Backoff）」を用いた自動リトライロジックの実装。
+
+Dockerコンテナ化による、Azure等へのシームレスなデプロイ準備。
+
+
 ①　シンプルな API Key 認証（まずはこれ！）
 フロントエンドとバックエンドの間で「合言葉（API Key）」を共有します。
 仕組み: リクエストヘッダーに特定のキーが含まれていない場合、バックエンドが即座に 401 Unauthorized を返します。
@@ -598,3 +649,9 @@ APIM 導入時: APIM 経由の通信だけを許可する「プロの構成」�
 課題: SQLインジェクションやクロスサイトスクリプティング（XSS）等のWeb特有の攻撃、およびAPIコストを狙った不正アクセス。
 対策: Azure WAF (Web Application Firewall) を導入。インフラ最前面で悪意あるリクエストを検知・遮断し、アプリケーションに到達するトラフィックの純度を高める。』
 
+
+
+
+git add .
+git commit -m "chore: restructure project directory for production"
+git push origin v3-gemini-live
