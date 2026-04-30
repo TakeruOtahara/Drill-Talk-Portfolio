@@ -15,3 +15,5 @@
 
 # 実行ファイル
 ngrok.exe
+
+!.env.example
