@@ -272,7 +272,7 @@ export default function Home() {
               </>
             ) : !lessonStarted ? (
               <div className="relative w-full inline-flex justify-center">
-                <SquirrelLoader isVisible={isAnalyzing} message="マナブが原本を解読中..." />
+                <SquirrelLoader isVisible={isAnalyzing} />
                 <button 
                   disabled={isAnalyzing} 
                   onClick={handleStartLesson} 
@@ -295,7 +295,7 @@ export default function Home() {
                   {isManabuSpeaking ? "マナブ君が発言中..." : isFinishing ? "待機中..." : isListening ? "一時停止" : "説明を再開"}
                 </button>
                 <div className="relative flex-1 flex justify-center">
-                  <SquirrelLoader isVisible={isFinishing} message="ノートを作成中..." />
+                  <SquirrelLoader isVisible={isFinishing} />
                   <button 
                     onClick={handleFinish} 
                     disabled={isFinishing} 
