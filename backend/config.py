@@ -11,7 +11,6 @@ class Settings(BaseSettings):
     # 🔑 秘密鍵：環境変数 (.env) から必須読み込み
     # ==========================================
     GEMINI_API_KEY: str
-    DRILLTALK_API_KEY: str
     
     # ==========================================
     # 🌐 ネットワーク設定

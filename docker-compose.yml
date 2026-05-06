@@ -4,25 +4,18 @@ services:
     build: ./backend
     ports:
       - "8000:8000"
-    # 🛡️ バックエンドに必要な環境変数（GEMINI_API_KEY, ALLOWED_ORIGINS, DRILLTALK_API_KEY）
     env_file:
       - .env
 
   frontend:
     build:
       context: ./frontend
-      # 💡 追加：ビルド時に変数を安全に渡す
-      args:
-        NEXT_PUBLIC_DRILLTALK_API_KEY: ${NEXT_PUBLIC_DRILLTALK_API_KEY}
-        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL}
     ports:
       - "3000:3000"
     environment:
-      # 📡 通信先URL（変数がなければlocalhostを使う）
-      - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-ws://localhost:8000/ws/manabu}
-      # 🛡️ 忘れ物！フロントエンドも「合言葉」を知る必要があります
-      - NEXT_PUBLIC_DRILLTALK_API_KEY=${NEXT_PUBLIC_DRILLTALK_API_KEY}
-      # 💡 追加：Next.js のサーバー側で使用するバックエンドのアドレス
-      - BACKEND_INTERNAL_URL=${BACKEND_INTERNAL_URL:-http://backend:8000}
+      # 🛡️ BFF(middleware.ts)がAPIM/バックエンドの城壁を通るための合言葉
+      - DRILLTALK_API_KEY=${DRILLTALK_API_KEY}
+      # 📡 BFF(middleware.ts)がリクエストを横流しする本当の宛先
+      - BACKEND_URL=http://backend:8000
     depends_on:
       - backend

@@ -1,5 +1,6 @@
 // --- v3-app/frontend/src/hooks/useManabu.ts ---
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useSpeechSynthesis } from "./useSpeechSynthesis";
 
 // 💡 TypeScript用の型定義：これがあることで page.tsx でのエラーが消えます
 interface UseManabuReturn {
@@ -23,11 +24,14 @@ interface UseManabuReturn {
 
 export const useManabu = ({ 
   isListening, 
-  onError 
+  onError,
+  onReset 
 }: { 
   isListening: boolean; 
-  onError: () => void 
+  onError: () => void;
+  onReset: () => void; 
 }): UseManabuReturn => {
+  const { speak: synthSpeak, cancel: synthCancel } = useSpeechSynthesis();
   const [notebook, setNotebook] = useState("");
   const [missingPoints, setMissingPoints] = useState<string[]>([]);
   const [misconceptions, setMisconceptions] = useState<string[]>([]);
@@ -67,31 +71,17 @@ export const useManabu = ({
 
   // 🗣️ 音声合成（発話）
   const speak = useCallback((text: string, onEnd?: () => void) => {
-    if (!("speechSynthesis" in window)) return;
-    
-    window.speechSynthesis.cancel();
-    const uttr = new SpeechSynthesisUtterance(text);
-    uttr.lang = "ja-JP";
-    uttr.rate = 1.1;
-    uttr.pitch = 1.2;
-
-    uttr.onend = () => {
+    setIsManabuSpeaking(true);
+    synthSpeak(text, () => {
       setIsManabuSpeaking(false);
       if (onEnd) onEnd();
-    };
-
-    uttr.onerror = () => {
-      setIsManabuSpeaking(false);
-    };
-
-    setIsManabuSpeaking(true);
-    window.speechSynthesis.speak(uttr);
-  }, []);
+    });
+  }, [synthSpeak]);
 
   const cancelSpeak = useCallback(() => {
-    window.speechSynthesis.cancel();
+    synthCancel();
     setIsManabuSpeaking(false);
-  }, []);
+  }, [synthCancel]);
 
   // 📡 WebSocket接続管理
   useEffect(() => {
@@ -111,11 +101,8 @@ export const useManabu = ({
 
     const connect = () => {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const host = process.env.NEXT_PUBLIC_WS_URL || window.location.host;
-      // 🛡️ 環境変数からAPI Keyを取得
-      const apiKey = process.env.NEXT_PUBLIC_DRILLTALK_API_KEY;
-      // URLにクエリパラメータとして付与
-      const wsUrl = `${protocol}//${process.env.NEXT_PUBLIC_WS_URL}/ws/manabu?api_key=${apiKey}`;
+      // 🛡️ APIキーも、外部のWS_URLも使わない。Next.js自身のプロキシを叩く。
+      const wsUrl = `${protocol}//${window.location.host}/ws/manabu`;
 
       const ws = new WebSocket(wsUrl);
       socketInstance = ws;
@@ -127,7 +114,14 @@ export const useManabu = ({
         const originalStr = localStorage.getItem("dt_original");
 
         const history = historyStr ? JSON.parse(historyStr) : [];
-        const structured = structuredStr ? JSON.parse(structuredStr) : {};
+        const structured = structuredStr ? JSON.parse(structuredStr) : null;
+
+        // 🛡️ 記憶の自己破壊防止：有効な教材データがなければ、同期せずに強制リセット
+        if (!structured || Object.keys(structured).length === 0) {
+          console.warn("⚠️ 有効な教材データがありません。セッションを強制リセットします。");
+          onReset();
+          return;
+        }
 
         // セッション同期
         ws.send(JSON.stringify({

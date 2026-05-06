@@ -12,15 +12,16 @@ Drill-Talkは、独学者が陥りがちな「分かったつもり」を解消�
 
 ## ✨ Core Features
 
-*   **🗣️ 完全な音声UI (VUI) と排他制御**
-    *   Web Audio APIとVAD (Voice Activity Detection) を独自実装。エコーバックを物理的に防ぎ、ストレスフリーな対話環境を実現。
+*   **🗣️ 完全な音声UI (VUI) とマイクの排他制御**
+    *   ブラウザの音声認識APIと、AIの発話状態（TTS）を同期させる独自のステート管理を実装。マナブ君の発話中はマイク入力をソフトウェアレベルで強制遮断することでエコーバックを完封し、ストレスフリーな対話環境を実現。
 *   **🧠 メタ認知評価システム (Tripartite Matching)**
     *   「ユーザーの発話ログ」「原本教材」「忘れたことメモ」の3点を Gemini 2.5 Flash API でクロスチェック。説明が漏れた箇所と勘違いを分離して提示します。
-*   **⚡ ステートフルなリアルタイム通信**
-    *   WebSocket を用いたステート管理により、ブラウザのリフレッシュや瞬断が起きても学習セッションを即座に復元可能です。
-*   **🛡️ エンタープライズ級の堅牢性**
-    *   インフラ起因のエラー（HTTP 429/503）に対する指数バックオフ（自動リトライ）処理や、Pydanticを用いた厳格な環境変数バリデーションを実装。
-
+*   **⚡ クラウドネイティブな耐障害性 (Connection-scoped state)**
+    *   コンテナインフラ（Azure Container Apps等）のエフェメラルな性質に対応するため、バックエンドは完全なステートレス設計を採用。WebSocketの切断・コンテナの再起動が発生しても、フロントエンドのLocalStorageから瞬時にセッションを再構築（SYNC_SESSION）し、学習データをロストしません。
+*   **🛡️ BFFプロキシによるゼロ・シークレット・フロントエンド**
+    *   Next.jsのサーバーサイド機能（Rewrites/API Routes）をBFF（Backend For Frontend）として活用。ブラウザ側にAPIキーを一切露出させず、サーバー間通信でのみ認証を行う強固なセキュリティ境界を構築しています。
+*   **🔐 マネージドIDとRBACによるパスワードレス・アーキテクチャ**
+    *   インフラストラクチャのデプロイ（IaC: Bicep）において、Azure Managed IdentitiesとRBAC（ロールベースアクセス制御）を採用。コンテナレジストリ（ACR）のPullやKey Vaultへのシークレットアクセスにおいて、パスワードやアクセスキーの管理を排除し、最高レベルのセキュアなインフラを構築しています。また、内部APIキーもデプロイ時に動的生成されるため、漏洩リスクがありません。
 ---
 
 ## 🛠 Tech Stack & Environment
@@ -39,44 +40,49 @@ Drill-Talkは、独学者が陥りがちな「分かったつもり」を解消�
 全体システム構成図（System Architecture）
 ```mermaid
 graph TD
-    subgraph Client [フロントエンド / Next.js 16]
-        UI[React / Tailwind CSS<br>Framer Motion]
-        VAD[Voice Activity Detection<br>AudioContext / SpeechToText]
-        Storage[(LocalStorage<br>セッション復元)]
+    subgraph Client ["ブラウザ (React / UI層)"]
+        UI["React / Tailwind CSS"]
+        VAD["Voice Activity Detection"]
+        Storage[("LocalStorage<br>真実のマスター")]
         
-        VAD <-->|マイク制御とエコー防止| UI
-        Storage -.->|マウント時同期| UI
+        VAD -->|"マイク制御とエコー防止"| UI
+        Storage -.->|"再接続時同期"| UI
     end
 
-    subgraph Gatekeeper [インフラ層 / セキュリティ境界]
-        APIM{Azure API Management<br>API Key認証 / IP制限}
+    subgraph BFF ["Next.js サーバーサイド"]
+        Proxy["API Rewrites<br>BFFプロキシ"]
+        Proxy -.->|"秘匿されたAPIキーを付与"| APIM
     end
 
-    subgraph Server [バックエンド / FastAPI]
-        Config[Pydantic Settings<br>CORS / 鍵管理]
-        WS[WebSocket Endpoint<br>ステート管理 / セッション同期]
-        Logic[GeminiProvider<br>指数バックオフ・リトライ処理]
+    subgraph Gatekeeper ["インフラ層 / セキュリティ境界"]
+        APIM{"Azure API Management<br>API Key認証 / IP制限"}
+    end
+
+    subgraph Server ["バックエンド / FastAPI"]
+        WS["WebSocket Endpoint<br>ステートレス・接続スコープ"]
+        Logic["GeminiProvider<br>指数バックオフ・リトライ処理"]
         
-        Config -.-> WS
         WS <--> Logic
     end
 
-    subgraph External [外部AIサービス]
-        LLM[Google Gemini 2.5 Flash API<br>メタ認知・4要素抽出]
+    subgraph External ["外部AIサービス"]
+        LLM["Google Gemini 2.5 Flash API"]
     end
 
-    Client <-->|WebSocket wss| APIM
-    APIM <-->|通信トラフィック保護| Server
-    Logic <-->|REST API 非同期| LLM
+    Client -->|"WebSocket ws"| Proxy
+    APIM -->|"通信トラフィック保護"| Server
+    Logic -->|"REST API 非同期"| LLM
 
     classDef client fill:#e0f2fe,stroke:#2563eb,stroke-width:2px,color:#0f172a;
+    classDef bff fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#0f172a;
     classDef gatekeeper fill:#fecaca,stroke:#ef4444,stroke-width:2px,color:#0f172a;
     classDef server fill:#dcfce7,stroke:#059669,stroke-width:2px,color:#0f172a;
     classDef external fill:#fef08a,stroke:#d97706,stroke-width:2px,color:#0f172a;
 
     class UI,VAD,Storage client;
+    class Proxy bff;
     class APIM gatekeeper;
-    class WS,Logic,Config server;
+    class WS,Logic server;
     class LLM external;
 ```
 リアルタイム通信シーケンス図（Real-time Sequence）
@@ -132,34 +138,68 @@ sequenceDiagram
 Azure デプロイメント構成図（Azure Infrastructure）
 ```mermaid
 graph LR
-    subgraph Local [ローカル開発環境]
-        Dev[Local PC<br>Docker Compose]
+    subgraph Local ["ローカル開発環境"]
+        Dev["Local PC<br>Docker Compose"]
     end
 
-    subgraph AzureCloud [Microsoft Azure]
-        ACR[Azure Container Registry<br>コンテナ保管庫]
+    subgraph AzureCloud ["Microsoft Azure"]
         
-        subgraph SecurityZone [セキュアネットワーク]
-            APIM[Azure API Management<br>レート制限 / IPフィルタリング]
-            ACA[Azure App Service<br>Web App for Containers]
-            APIM -->|アクセス許可IPのみ| ACA
+        subgraph FrontendZone ["フロントエンド層 / BFF"]
+            ACA_Front["Azure Container Apps<br>Next.js Frontend<br>Scale: 1-2"]
+        end
+
+        subgraph SecurityZone ["APIゲートウェイ層"]
+            APIM["Azure API Management<br>レート制限 / アクセス保護"]
+        end
+
+        subgraph BackendZone ["バックエンド層 / 内部通信"]
+            ACA_Back["Azure Container Apps<br>FastAPI Backend<br>Scale: 0-2 / Internal"]
+        end
+
+        subgraph StorageZone ["機密・コンテナ保管"]
+            ACR["Azure Container Registry<br>Dockerイメージ保管庫"]
+            AKV["Azure Key Vault<br>APIキー等シークレット管理"]
         end
         
-        Monitor[Azure Monitor / Log Analytics<br>死活監視・エラー検知]
+        subgraph FinOpsZone ["監視・予算統制層"]
+            AppInsights["Application Insights<br>パフォ監視 / AI通信計測"]
+            LogAnalytics["Log Analytics<br>統合ログデータレイク"]
+            Budget["Cost Management<br>予算アラート制御"]
+        end
     end
 
-    Dev -->|Docker Push| ACR
-    ACR -->|Image Pull| ACA
-    ACA -.->|ログ出力| Monitor
+    %% デプロイメントフロー
+    Dev -->|"Docker Push"| ACR
+    ACR -.->|"Image Pull"| ACA_Front
+    ACR -.->|"Image Pull"| ACA_Back
+    AKV -.->|"シークレット参照"| ACA_Back
+    AKV -.->|"シークレット参照"| ACA_Front
 
-    User((ユーザー)) -->|HTTPS / WSS| APIM
-    User -.->|直接アクセス拒否| ACA
+    %% トラフィックフロー
+    User(("ユーザー")) -->|"HTTPS"| ACA_Front
+    ACA_Front -->|"BFF Proxy (WSS)"| APIM
+    APIM -->|"内部トラフィック転送"| ACA_Back
+
+    %% テレメトリと監視フロー
+    ACA_Front -->|"テレメトリ送信"| AppInsights
+    ACA_Back -->|"テレメトリ送信"| AppInsights
+    AppInsights -->|"データ格納"| LogAnalytics
+    ACA_Front -->|"コンテナログ出力"| LogAnalytics
+    ACA_Back -->|"コンテナログ出力"| LogAnalytics
+    LogAnalytics -.->|"利用料監視"| Budget
+    Budget -.->|"閾値超過で通知"| Admin(("管理者 / メール"))
 
     classDef azure fill:#bfdbfe,stroke:#0284c7,stroke-width:2px,color:#0f172a;
-    classDef secure fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#0f172a,stroke-dasharray: 5 5;
+    classDef finops fill:#fef08a,stroke:#d97706,stroke-width:2px,color:#0f172a;
+    classDef storage fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#0f172a;
     
-    class ACR,APIM,ACA,Monitor azure;
-    class SecurityZone secure;
+    class ACR,ACA_Front,ACA_Back,APIM azure;
+    class AKV storage;
+    class AppInsights,LogAnalytics,Budget finops;
+
+    %% サブグラフへのスタイル直接指定
+    style SecurityZone fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#0f172a,stroke-dasharray: 5 5;
+    style FinOpsZone fill:#fef08a,stroke:#d97706,stroke-width:2px,color:#0f172a;
 ```
 
 ## 📂 Directory Structure
@@ -168,15 +208,18 @@ graph LR
 Drill-Talk-Portfolio/
 ├── frontend/                # Next.js 16 + TypeScript
 │   ├── app/                 # App Router (Pages, Layouts)
-│   ├── components/          # React components (VUI, Avatar, SquirrelLoader)
-│   ├── hooks/               # Custom Hooks (useManabu, useVAD)
+│   ├── components/          # React components (ManabuAvatar, NotebookModal, etc.)
+│   ├── hooks/               # Custom Hooks (useManabu, useSpeechToText, etc.)
+│   ├── proxy.ts             # WebSocketプロキシ＆認証ヘッダー付与 (Next.js 16仕様)
+│   ├── next.config.ts       # Standaloneコンテナビルド最適化設定
 │   ├── package-lock.json    # 環境再現のための依存関係ロック
 │   └── Dockerfile           # Next.js Standalone ビルド
 ├── backend/                 # FastAPI + Python 3.11
 │   ├── main.py              # WebSocket handlers & routing
 │   ├── logic.py             # Gemini API orchestration & Retry logic
+│   ├── config.py            # Pydanticによる環境変数・CORSの堅牢なバリデーション
 │   ├── requirements.lock    # Python 依存関係ロック
-│   └── Dockerfile           # Slim Python image
+│   └── Dockerfile           # Slim Python image (非root実行・セキュリティ強化)
 ├── docker-compose.yml       # ローカル開発・本番共通環境
 ├── dev_log.md               # 開発・トラブルシューティング記録
 └── README.md                # 本ドキュメント
@@ -190,11 +233,9 @@ Drill-Talk-Portfolio/
 
 | 変数名 | 必須 | 説明 |
 | :--- | :---: | :--- |
-| `GEMINI_API_KEY` | ✅ | Google AI Studio で取得したAPIキー。 |
-| `DRILLTALK_API_KEY` | ✅ | バックエンド側の認証用シークレットキー。 |
-| `NEXT_PUBLIC_DRILLTALK_API_KEY` | ✅ | フロントエンド側の認証用。**`DRILLTALK_API_KEY` と同じ値**を設定してください。 |
+| `GEMINI_API_KEY` | ✅ | Google AI Studio で取得したAPIキー。本番環境ではAzure Key Vaultから安全に注入されます。 |
+| `DRILLTALK_API_KEY` | ✅ |バックエンド側の認証用シークレットキー。※ローカル開発時(docker-compose)は任意の文字列を設定。本番環境(Azure)ではデプロイ時にBicepが動的かつセキュアに自動生成・共有するため設定不要です。|
 | `ALLOWED_ORIGINS_RAW` | ❌ | CORS許可リスト。ローカル開発時は `http://localhost:3000` で固定。 |
-| `NEXT_PUBLIC_WS_URL` | ❌ | WebSocket接続先。ローカル開発時は `localhost:8000` を指定。 |
 
 ### 2. アプリケーションの起動
 Docker Compose を使用して、フロントエンド（3000番）とバックエンド（8000番）を一括でビルド・起動します。
@@ -204,6 +245,28 @@ Docker Compose を使用して、フロントエンド（3000番）とバック�
 ビルド完了後、ブラウザで以下のURLにアクセスしてください。
 * Frontend (UI): http://localhost:3000
 * Backend (API Docs): http://localhost:8000/docs
+
+## 🗺️ Future Roadmap (v4.0 and beyond)
+
+本プロジェクトは現在、ブラウザの `localStorage` とコンテナの接続スコープを利用したスタンドアロン環境として稼働していますが、次期バージョン（v4.0以降）では、データ駆動型のパーソナル学習プラットフォームへの進化を計画しています。
+
+### 1. ユーザー認証の導入とゼロトラストセキュリティ
+現在のBFF（Backend For Frontend）プロキシにおけるAPIキー管理の技術的負債を解消し、エンタープライズ水準のセキュリティを確保します。
+*   **Auth.js (NextAuth) / Azure Entra ID の導入:** OAuth2.0ベースのログイン機能（Google/GitHub/Microsoftアカウント連携）を実装します。
+*   **WebSocketのアクセス制御:** Next.jsの `middleware.ts` を用いて、有効なセッションを持つユーザーのみがバックエンド（API/WebSocket）へルーティングされるよう保護し、Gemini APIの不正利用を物理的に遮断します。
+
+### 2. 学習データの永続化（Cloud Database）
+揮発性の高いステート管理から脱却し、マルチテナント対応のデータストアを導入します。
+*   **Azure Database for PostgreSQL の統合:** ユーザープロファイル、アップロードされた教材データ（BLOBストレージとの連携）、過去の発話ログ、および生成された評価ノートをリレーショナルデータベースで一元管理します。
+*   **デバイス間のシームレスな学習:** PCでアップロードした教材を使って、移動中にスマートフォンで音声レクチャーを行うなど、クロスデバイスでの学習再開を可能にします。
+
+### 3. エビングハウスの忘却曲線に基づく復習システム (Spaced Repetition)
+「分かったつもり」を解消した後の、「記憶の定着」までをシステムがカバーします。
+*   **インテリジェント・リマインダー:** 評価ノートで抽出された「勘違い (Misconceptions)」やユーザー自身が書き残した「忘れたことメモ」をデータベースに蓄積。エビングハウスの忘却曲線をアルゴリズムに応用し、記憶が薄れる最適なタイミング（1日後、3日後、1週間後など）で復習を促す通知（Email/Push）を自動送信します。
+
+### 4. メタ認知ダッシュボード（Learning Analytics）
+ユーザー自身の成長を可視化し、モチベーションを維持する機能を提供します。
+*   **学習傾向の分析:** 過去の評価ノートを横断的に解析し、「論理展開の飛躍が多い」「特定のキーワードを忘れがちである」といったユーザー固有のブラインドスポットの傾向をグラフ化してフィードバックします。
 
 ## 📓 Developer Log
 詳細な技術選定の理由やトラブルシューティングの軌跡は、開発ログ (dev_log.md) を参照してください。

@@ -39,29 +39,11 @@ ai_brain = GeminiProvider()
 # 💡 WebSocket エンドポイント
 # ==========================================
 @app.websocket("/ws/manabu")
-async def websocket_endpoint(
-    websocket: WebSocket, 
-    api_key: str = Query(None)
-):
-    # 🛡️ 第1関門：オリジン制限（CSWSH対策）
+async def websocket_endpoint(websocket: WebSocket):
     client_origin = websocket.headers.get("origin")
-    if not settings.ALLOWED_ORIGINS or client_origin not in settings.ALLOWED_ORIGINS:
-        logger.warning(f"🚫 拒否：不正なオリジン: {client_origin}")
-        await websocket.accept() 
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-
-    # 🛡️ 第2関門：API Key（合言葉）の厳格チェック
-    if not settings.DRILLTALK_API_KEY or api_key != settings.DRILLTALK_API_KEY:
-        logger.warning(f"🚫 拒否：API Key不一致または未設定: {api_key}")
-        if not websocket.client_state.CONNECTED:
-            await websocket.accept()
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        return
-    
-    # 🔓 門番をすべてパスして初めて入室許可
+    # APIM（城壁）とNext.js（BFF）を越えてきたリクエストは完全に信頼する
     await websocket.accept()
-    logger.info(f"📢 認証成功: {client_origin} から接続されました。")
+    logger.info(f"📢 接続確立 (認証はAPIMで通過済み): {client_origin} から接続されました。")
 
     state = {
         "original_text": "",
@@ -89,12 +71,22 @@ async def websocket_endpoint(
             # 🔄 ① 記憶の同期（SYNC_SESSION）
             if data_type == "SYNC_SESSION":
                 payload = message.get("payload", {})
-                state["lecture_history"] = payload.get("lecture_history", [])
-                state["structured_original"] = payload.get("structured_original", {})
-                state["original_text"] = payload.get("original_text", "")
-                state["chars_since_last_question"] = payload.get("chars_count", 0)
                 
-                logger.info(f"🧠 記憶同期成功：履歴[{len(state['lecture_history'])}件] を復旧。")
+                # 🛡️ 受信したデータが「空」でない場合のみ上書きを許可する
+                frontend_history = payload.get("lecture_history", [])
+                if frontend_history:
+                    state["lecture_history"] = frontend_history
+                    state["chars_since_last_question"] = payload.get("chars_count", 0)
+
+                frontend_structured = payload.get("structured_original", {})
+                if frontend_structured:
+                    state["structured_original"] = frontend_structured
+
+                frontend_original = payload.get("original_text", "")
+                if frontend_original:
+                    state["original_text"] = frontend_original
+                
+                logger.info(f"🧠 記憶同期完了：履歴[{len(state['lecture_history'])}件]")
                 await websocket.send_json({"type": "SESSION_SYNCED"})
                 continue
 

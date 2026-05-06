@@ -26,6 +26,7 @@ export default function Home() {
   const isUserSpeaking = useVoiceActivity(isListeningState);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const resetCallbackRef = useRef<() => void>(() => {});
 
   // 💡 エラーハンドラ：解析失敗時に状態を戻す
   const handleLoadError = useCallback(() => {
@@ -41,10 +42,10 @@ export default function Home() {
     questionQueue,
     sendMessage, speak, cancelSpeak,
     unlockAudio 
-  } = useManabu({ 
-    // 💡 Hooks側へマイクの「ON/OFFの意思」を同期
+  } = useManabu({
     isListening: isListeningState, 
-    onError: handleLoadError 
+    onError: handleLoadError,
+    onReset: () => resetCallbackRef.current()
   });
 
   const { isListening, toggleListening } = useSpeechToText(
@@ -207,7 +208,7 @@ export default function Home() {
     sendMessage("RESTART_LECTURE", {});
   };
 
-  const handleForceReset = () => {
+  const handleForceReset = useCallback(() => {
     cancelSpeak();
     setNotebook("");
     setIsFinishing(false);
@@ -221,7 +222,11 @@ export default function Home() {
     if (isListening) toggleListening(); 
     clearAllData();
     sendMessage("RESTART_LECTURE", {}); 
-  };
+  }, [cancelSpeak, isListening, toggleListening]); // 依存配列に注意
+  
+  useEffect(() => {
+    resetCallbackRef.current = handleForceReset;
+  }, [handleForceReset]);
 
   return (
     <div className="flex flex-col lg:flex-row min-h-screen bg-zinc-50 font-sans text-slate-900 overflow-x-hidden relative">
