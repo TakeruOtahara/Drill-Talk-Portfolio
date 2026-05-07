@@ -21,7 +21,9 @@ Drill-Talkは、独学者が陥りがちな「分かったつもり」を解消�
 *   **🛡️ BFFプロキシによるゼロ・シークレット・フロントエンド**
     *   Next.jsのサーバーサイド機能（Rewrites/API Routes）をBFF（Backend For Frontend）として活用。ブラウザ側にAPIキーを一切露出させず、サーバー間通信でのみ認証を行う強固なセキュリティ境界を構築しています。
 *   **🔐 マネージドIDとRBACによるパスワードレス・アーキテクチャ**
-    *   インフラストラクチャのデプロイ（IaC: Bicep）において、Azure Managed IdentitiesとRBAC（ロールベースアクセス制御）を採用。コンテナレジストリ（ACR）のPullやKey Vaultへのシークレットアクセスにおいて、パスワードやアクセスキーの管理を排除し、最高レベルのセキュアなインフラを構築しています。また、内部APIキーもデプロイ時に動的生成されるため、漏洩リスクがありません。
+    *   インフラストラクチャのデプロイ（IaC: Bicep）において、Azure Managed IdentitiesとRBAC（ロールベースアクセス制御）を採用。コンテナレジストリ（ACR）のPullやKey Vaultへのシークレットアクセスにおいて、パスワードやアクセスキーの管理を排除し、最高レベルのセキュアなインフラを構築しています。また、内部APIキーはIaCのベストプラクティスに従い、デプロイ時にセキュアパラメータとして注入・共有される設計です。
+*   **🕰️ FinOps と Silent Drop による徹底したコスト保護**
+    *   バックエンドコンテナにKEDA (Kubernetes Event-driven Autoscaling) のCronスケーラーを導入し、「営業時間（8:00-24:00）のみ1台稼働、深夜帯はゼロスケール」というコスト最適化を実現。さらに、DDoSやスパムによるAPI課金増大を防ぐため、アプリケーション層で異常な連続送信を検知し、エラーすら返さずに無音で破棄する「Silent Drop」を実装しています。
 ---
 
 ## 🛠 Tech Stack & Environment
@@ -51,15 +53,10 @@ graph TD
 
     subgraph BFF ["Next.js サーバーサイド"]
         Proxy["API Rewrites<br>BFFプロキシ"]
-        Proxy -.->|"秘匿されたAPIキーを付与"| APIM
     end
 
-    subgraph Gatekeeper ["インフラ層 / セキュリティ境界"]
-        APIM{"Azure API Management<br>API Key認証 / IP制限"}
-    end
-
-    subgraph Server ["バックエンド / FastAPI"]
-        WS["WebSocket Endpoint<br>ステートレス・接続スコープ"]
+    subgraph Server ["バックエンド / FastAPI (Internal)"]
+        WS["WebSocket Endpoint<br>ステートレス・接続スコープ<br>※Silent Drop スパム防御"]
         Logic["GeminiProvider<br>指数バックオフ・リトライ処理"]
         
         WS <--> Logic
@@ -70,18 +67,16 @@ graph TD
     end
 
     Client -->|"WebSocket ws"| Proxy
-    APIM -->|"通信トラフィック保護"| Server
+    Proxy -->|"内部VNet通信<br>秘匿APIキー付与"| Server
     Logic -->|"REST API 非同期"| LLM
 
     classDef client fill:#e0f2fe,stroke:#2563eb,stroke-width:2px,color:#0f172a;
     classDef bff fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#0f172a;
-    classDef gatekeeper fill:#fecaca,stroke:#ef4444,stroke-width:2px,color:#0f172a;
     classDef server fill:#dcfce7,stroke:#059669,stroke-width:2px,color:#0f172a;
     classDef external fill:#fef08a,stroke:#d97706,stroke-width:2px,color:#0f172a;
 
     class UI,VAD,Storage client;
     class Proxy bff;
-    class APIM gatekeeper;
     class WS,Logic server;
     class LLM external;
 ```
@@ -145,15 +140,11 @@ graph LR
     subgraph AzureCloud ["Microsoft Azure"]
         
         subgraph FrontendZone ["フロントエンド層 / BFF"]
-            ACA_Front["Azure Container Apps<br>Next.js Frontend<br>Scale: 1-2"]
-        end
-
-        subgraph SecurityZone ["APIゲートウェイ層"]
-            APIM["Azure API Management<br>レート制限 / アクセス保護"]
+            ACA_Front["Azure Container Apps<br>Next.js Frontend<br>Scale: 0-2 / External"]
         end
 
         subgraph BackendZone ["バックエンド層 / 内部通信"]
-            ACA_Back["Azure Container Apps<br>FastAPI Backend<br>Scale: 0-2 / Internal"]
+            ACA_Back["Azure Container Apps<br>FastAPI Backend<br>Scale: 0-1 / Internal<br>※KEDA Cron Scaling"]
         end
 
         subgraph StorageZone ["機密・コンテナ保管"]
@@ -176,9 +167,8 @@ graph LR
     AKV -.->|"シークレット参照"| ACA_Front
 
     %% トラフィックフロー
-    User(("ユーザー")) -->|"HTTPS"| ACA_Front
-    ACA_Front -->|"BFF Proxy (WSS)"| APIM
-    APIM -->|"内部トラフィック転送"| ACA_Back
+    User(("ユーザー")) -->|"HTTPS / WSS"| ACA_Front
+    ACA_Front -->|"内部VNet通信<br>(Secret Key付与)"| ACA_Back
 
     %% テレメトリと監視フロー
     ACA_Front -->|"テレメトリ送信"| AppInsights
@@ -192,13 +182,15 @@ graph LR
     classDef azure fill:#bfdbfe,stroke:#0284c7,stroke-width:2px,color:#0f172a;
     classDef finops fill:#fef08a,stroke:#d97706,stroke-width:2px,color:#0f172a;
     classDef storage fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#0f172a;
+    classDef internal fill:#f1f5f9,stroke:#64748b,stroke-width:2px,color:#0f172a,stroke-dasharray: 5 5;
     
-    class ACR,ACA_Front,ACA_Back,APIM azure;
+    class ACR,ACA_Front azure;
     class AKV storage;
     class AppInsights,LogAnalytics,Budget finops;
+    class ACA_Back internal;
 
     %% サブグラフへのスタイル直接指定
-    style SecurityZone fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#0f172a,stroke-dasharray: 5 5;
+    style BackendZone fill:#f8fafc,stroke:#94a3b8,stroke-width:2px,color:#0f172a,stroke-dasharray: 5 5;
     style FinOpsZone fill:#fef08a,stroke:#d97706,stroke-width:2px,color:#0f172a;
 ```
 
@@ -234,7 +226,7 @@ Drill-Talk-Portfolio/
 | 変数名 | 必須 | 説明 |
 | :--- | :---: | :--- |
 | `GEMINI_API_KEY` | ✅ | Google AI Studio で取得したAPIキー。本番環境ではAzure Key Vaultから安全に注入されます。 |
-| `DRILLTALK_API_KEY` | ✅ |バックエンド側の認証用シークレットキー。※ローカル開発時(docker-compose)は任意の文字列を設定。本番環境(Azure)ではデプロイ時にBicepが動的かつセキュアに自動生成・共有するため設定不要です。|
+| `DRILLTALK_API_KEY` | ✅ |バックエンド側の認証用シークレットキー。※ローカル開発時(docker-compose)は任意の文字列を設定。本番環境(Azure)では、Bicepのセキュアパラメータとして注入され、フロント・バック間で安全に共有されます。|
 | `ALLOWED_ORIGINS_RAW` | ❌ | CORS許可リスト。ローカル開発時は `http://localhost:3000` で固定。 |
 
 ### 2. アプリケーションの起動
@@ -253,7 +245,6 @@ Docker Compose を使用して、フロントエンド（3000番）とバック�
 ### 1. ユーザー認証の導入とゼロトラストセキュリティ
 現在のBFF（Backend For Frontend）プロキシにおけるAPIキー管理の技術的負債を解消し、エンタープライズ水準のセキュリティを確保します。
 *   **Auth.js (NextAuth) / Azure Entra ID の導入:** OAuth2.0ベースのログイン機能（Google/GitHub/Microsoftアカウント連携）を実装します。
-*   **WebSocketのアクセス制御:** Next.jsの `middleware.ts` を用いて、有効なセッションを持つユーザーのみがバックエンド（API/WebSocket）へルーティングされるよう保護し、Gemini APIの不正利用を物理的に遮断します。
 
 ### 2. 学習データの永続化（Cloud Database）
 揮発性の高いステート管理から脱却し、マルチテナント対応のデータストアを導入します。

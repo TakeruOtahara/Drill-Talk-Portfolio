@@ -13,9 +13,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      # 🛡️ BFF(middleware.ts)がAPIM/バックエンドの城壁を通るための合言葉
+      # 🛡️ BFF(proxy.ts)が内部バックエンドと安全に通信するための合言葉
       - DRILLTALK_API_KEY=${DRILLTALK_API_KEY}
-      # 📡 BFF(middleware.ts)がリクエストを横流しする本当の宛先
+      # 📡 BFF(proxy.ts)がリクエストを横流しする宛先（ローカル環境のコンテナ間通信）
       - BACKEND_URL=http://backend:8000
     depends_on:
       - backend

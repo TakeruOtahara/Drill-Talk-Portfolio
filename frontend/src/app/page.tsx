@@ -12,6 +12,13 @@ import { RefreshCcw, ShieldCheck, BookOpen, Loader2, MessageSquareText, X } from
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 
 export default function Home() {
+  useEffect(() => {
+    const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+    const pingUrl = `${protocol}//${window.location.host}/ws/manabu`;
+    fetch(pingUrl, { mode: 'no-cors' }).catch(() => {
+    });
+  }, []);
+  
   const MAX_FILES = 5; 
 
   // --- States ---

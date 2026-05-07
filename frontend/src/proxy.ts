@@ -29,7 +29,7 @@ export function proxy(request: NextRequest) {
         requestHeaders.set('X-DrillTalk-Key', apiKey);
     }
 
-    // 3. APIMのURLに向けて通信を横流し（Rewrite）
+    // 3. 内部バックエンド（FastAPIのInternal Ingress）に向けて通信を横流し（Rewrite）
     const targetUrl = new URL(request.nextUrl.pathname, backendUrl);
     return NextResponse.rewrite(targetUrl, {
       request: {

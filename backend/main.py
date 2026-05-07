@@ -4,11 +4,16 @@ import base64
 import random
 import logging
 import sys
+import time
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from logic import GeminiProvider
 from prompts import STATIC_BACKCHANNELS
-from config import settings  # 💡 設定プロキシをインポート
+from config import settings
+
+# 追加: スパム判定の閾値（0.5秒）
+SPAM_COOLDOWN_SECONDS = 0.5
 
 # ==========================================
 # 💡 構造化ロギングの設定
@@ -52,6 +57,8 @@ async def websocket_endpoint(websocket: WebSocket):
         "chars_since_last_question": 0
     }
 
+    last_message_time = 0.0  # 追加: 前回メッセージを処理した時間
+
     try:
         while True:
             data = await websocket.receive_text()
@@ -67,6 +74,21 @@ async def websocket_endpoint(websocket: WebSocket):
 
             if data_type == "PING":
                 continue
+
+            # ==========================================
+            # 🛡️ 追加: 沈黙のスパム防御層（Silent Drop）
+            # ==========================================
+            # PING以外の「実質的なリクエスト」に対してのみ連射制限をかける
+            current_time = time.time()
+            time_since_last = current_time - last_message_time
+            
+            if time_since_last < SPAM_COOLDOWN_SECONDS:
+                logger.warning(f"🚫 スパム防御: [{data_type}] を破棄しました。(Delta: {time_since_last:.3f}s)")
+                continue 
+            
+            # 検証を通過した場合のみタイマーを更新
+            last_message_time = current_time
+            # ==========================================
 
             # 🔄 ① 記憶の同期（SYNC_SESSION）
             if data_type == "SYNC_SESSION":
