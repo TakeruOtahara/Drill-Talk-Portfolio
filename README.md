@@ -21,7 +21,7 @@ Drill-Talkは、独学者が陥りがちな「分かったつもり」を解消�
 *   **🛡️ BFFプロキシによるゼロ・シークレット・フロントエンド**
     *   Next.jsのサーバーサイド機能（Rewrites/API Routes）をBFF（Backend For Frontend）として活用。ブラウザ側にAPIキーを一切露出させず、サーバー間通信でのみ認証を行う強固なセキュリティ境界を構築しています。
 *   **🔐 マネージドIDとRBACによるパスワードレス・アーキテクチャ**
-    *   インフラストラクチャのデプロイ（IaC: Bicep）において、Azure Managed IdentitiesとRBAC（ロールベースアクセス制御）を採用。コンテナレジストリ（ACR）のPullやKey Vaultへのシークレットアクセスにおいて、パスワードやアクセスキーの管理を排除し、最高レベルのセキュアなインフラを構築しています。また、内部APIキーはIaCのベストプラクティスに従い、デプロイ時にセキュアパラメータとして注入・共有される設計です。
+    *   インフラのデプロイにおいて、Azure Managed IdentitiesとRBACを採用。コンテナからKey Vaultへのアクセスにおいて、パスワードやアクセスキーの管理を排除しました。APIキーはBicepのパラメータとして渡すのではなく、Key Vault内のシークレットを直接参照（Secret Reference）して環境変数に注入しています。
 *   **🕰️ FinOps と Silent Drop による徹底したコスト保護**
     *   バックエンドコンテナにKEDA (Kubernetes Event-driven Autoscaling) のCronスケーラーを導入し、「営業時間（8:00-24:00）のみ1台稼働、深夜帯はゼロスケール」というコスト最適化を実現。さらに、DDoSやスパムによるAPI課金増大を防ぐため、アプリケーション層で異常な連続送信を検知し、エラーすら返さずに無音で破棄する「Silent Drop」を実装しています。
 ---
@@ -163,7 +163,7 @@ graph LR
     Dev -->|"Docker Push"| ACR
     ACR -.->|"Image Pull"| ACA_Front
     ACR -.->|"Image Pull"| ACA_Back
-    AKV -.->|"シークレット参照"| ACA_Back
+    AKV -.->|"Managed Identity経由でSecretRef注入"| ACA_Back
     AKV -.->|"シークレット参照"| ACA_Front
 
     %% トラフィックフロー
@@ -226,7 +226,7 @@ Drill-Talk-Portfolio/
 | 変数名 | 必須 | 説明 |
 | :--- | :---: | :--- |
 | `GEMINI_API_KEY` | ✅ | Google AI Studio で取得したAPIキー。本番環境ではAzure Key Vaultから安全に注入されます。 |
-| `DRILLTALK_API_KEY` | ✅ |バックエンド側の認証用シークレットキー。※ローカル開発時(docker-compose)は任意の文字列を設定。本番環境(Azure)では、Bicepのセキュアパラメータとして注入され、フロント・バック間で安全に共有されます。|
+| `DRILLTALK_API_KEY` | ✅ |バックエンド認証用。本番(Azure)では Key Vault シークレットから自動注入されます。|
 | `ALLOWED_ORIGINS_RAW` | ❌ | CORS許可リスト。ローカル開発時は `http://localhost:3000` で固定。 |
 
 ### 2. アプリケーションの起動
