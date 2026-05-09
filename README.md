@@ -166,7 +166,7 @@ graph LR
     end
 
     %% デプロイメントフロー
-    Dev -->|"git push (main)"| GitHub
+    Dev -->|"git push (master)"| GitHub
     GitHub -->|"Docker Build & Push"| ACR
     ACR -.->|"Image Pull"| ACA_Front
     ACR -.->|"Image Pull"| ACA_Back
