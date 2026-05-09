@@ -40,12 +40,12 @@
 * **課題:** 音声認識（STT）とAI発話の衝突によるエコーバック問題が発覚。
 
 ### 🔹 v3: ゼロトラスト＆クラウドネイティブ最適化フェーズ【現在の完成版】
-* **技術スタック:** Next.js (Standalone), FastAPI, Docker, Pydantic, Framer Motion, VAD制御
+* **技術スタック:** Next.js (Standalone), FastAPI, Docker, Pydantic, Framer Motion, VAD制御, Bicep(IaC)
 * **進化点:** 
   * **メタ認知評価:** 原本・発話ログ・メモの三者照合アルゴリズムを実装。
   * **VAD (Voice Activity Detection):** 自作の音声アクティビティ検知により、マイクとAI発話の排他制御を達成。
   * **BFF (Backend For Frontend) アーキテクチャ:** Next.jsの `proxy.ts` を用いてサーバーサイドでAPIキーを隠蔽し、ブラウザからシークレット情報を完全に排除（ゼロ・シークレット）。
-  * **インフラ最適化:** Pydanticによる環境変数バリデーションと、Dockerの非root実行・Standaloneビルドによる本番環境（Azure Container Apps）を想定した堅牢性・軽量化を実現。
+  * **IaCとインフラ最適化:** Bicepを用いたインフラのコード化。Pydanticによる環境変数バリデーションと、Dockerの非root実行による本番環境（Azure Container Apps）を想定した堅牢性・軽量化を実現。
 
 ---
 
@@ -112,12 +112,28 @@
   2. **Azure App Serviceへの移行:** 常時稼働（Always On）前提ならApp Serviceがシンプルだが、マイクロサービス志向の喪失を意味するため却下。
 * **技術的決断 (ACAの採用継続):** フロントエンドとバックエンドを同一のContainer Apps Environmentに配置することで得られる「セキュアな内部VNet」「超高速な内部DNSによるコンテナ間通信」、そして「アイドル課金（CPUが動いていない時間は極めて低コスト）」のメリットはApp Serviceを凌駕すると判断し、ACAの採用を継続。
 * **解決策:** KEDA (Cronスケーラー) を導入し、営業時間（8:00-24:00）のみ常時待機させるハイブリッド戦略を実装。深夜帯のコールドスタート対策として、フロントエンド読み込み時にバックエンドへ疎通確認（Warm-up Ping）を自動実行するロジックをフロント側へ組み込み、UXの低下を最小限に抑制した。
+
 ### ISSUE 8: API課金防御とUXを両立する「Silent Drop」パターンの実装
 * **事象:** インフラ境界（APIM）を削除して内部通信に切り替えたことで、仮にフロントエンドを突破された場合、バックエンドのGemini API呼び出しが連射され、課金が跳ね上がるDDoS・スパムリスクが生じた。
 * **検討:** 
   1. エラー検知時にフロントエンドへ警告を返す手法も検討したが、ネットワークラグによる意図せぬ二重送信をした正規ユーザーのUXを損なうため却下。
-  2. **構成の整理**: Issue 5にてAPIMのヘッダー問題を解決したが、WebSocketとの親和性とコスト、構成のシンプル化を優先し、BFF（Next.js）がGatekeeperの役割を完全に代替する設計へと最終的にシフトした。
+  2. **構成の整理**: Issue 5にてAPIMのヘッダー問題を解決したが、WebSocketのステートフルな性質と、APIMを通すことによるオーバーヘッド（遅延）の回避を考慮し、BFF（Next.js）がGatekeeperの役割を完全に代替する設計へと最終的にシフトした。
 * **解決策:** バックエンド（FastAPI）のWebSocket処理において、前回のメッセージから `500ms` 未満の連続送信を検知した場合、エラーを返さずに無音でリクエストを破棄する「Silent Drop（Shadow Banning）」を実装。UXを一切損なうことなく、アプリケーション層でのAPI課金防御を完遂した。
+
+### ISSUE 9: Bicepデプロイ時のコンテナ起動タイムアウト (Operation expired)
+* **事象:** Azureへのデプロイ時、Container Appsの起動が10分経過でタイムアウトし失敗。
+* **原因:** System-Assigned IDを使用していたため、アプリの起動と同時に発行されたIDへKey Vaultのアクセス権限が浸透する前に、アプリがシークレット取得に走りタイムアウトを起こした。
+* **解決策:** 事前に作成可能な **User-Assigned Identity** へアーキテクチャを変更。Bicepの依存関係 (`dependsOn`) を厳格に定義し、「身分証作成と権限付与」が完全に完了してからアプリを構築するデッドロック回避構成を確立。
+
+### ISSUE 10: Azureリソースの上限とSoft Delete（ごみ箱）の罠
+* **事象:** `MaxNumberOfRegionalEnvironmentsInSubExceeded`（環境数の上限）エラーや、リソースグループを消去したにも関わらず Key Vault が `ConflictError` を起こす。
+* **原因:** Student枠における「1リージョン1環境」の制限。さらに、Azure Key Vaultのセキュリティ仕様である「論理的な削除 (Soft Delete)」により、削除後も同名リソースが90日間ごみ箱に保護されていたため。
+* **解決策:** 古いリソースグループを整理し、CLI/ポータルから論理削除された Key Vault を物理削除（Purge）してインフラを更地化することで解決。
+
+### ISSUE 11: 組み込みロールIDの解決と冪等性（二重登録）の担保
+* **事象:** Bicepデプロイ時に `RoleDefinitionDoesNotExist`（ルール不明）や `RoleAssignmentExists`（二重登録）エラーが頻発。
+* **原因:** 組み込みロールを現在のリソースグループ内で検索しようとした（`resourceId` の誤用）ことと、再デプロイのたびに権限付与の名前（GUID）が変動する実装になっていた。
+* **解決策:** `subscriptionResourceId()` を用いてサブスクリプション全体の正しい組み込みロールIDを参照。さらに、権限付与の名前を `guid(対象リソースID, マネージドID, ロールID)` とリソースに紐づく一意な固定値にすることで、Bicep最大の強みである**「冪等性（何度実行しても同じ安全な結果になる性質）」**を完全担保した。
 
 ---
 

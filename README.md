@@ -1,4 +1,4 @@
-# 🎓 Drill-Talk (v3.0)
+# 🎓 Drill-Talk (v3.2)
 
 [![Next.js](https://img.shields.io/badge/Next.js-16.1-black?logo=next.js)](https://nextjs.org/)
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?logo=react)](https://react.dev/)
@@ -21,9 +21,11 @@ Drill-Talkは、独学者が陥りがちな「分かったつもり」を解消�
 *   **🛡️ BFFプロキシによるゼロ・シークレット・フロントエンド**
     *   Next.jsのサーバーサイド機能（Rewrites/API Routes）をBFF（Backend For Frontend）として活用。ブラウザ側にAPIキーを一切露出させず、サーバー間通信でのみ認証を行う強固なセキュリティ境界を構築しています。
 *   **🔐 マネージドIDとRBACによるパスワードレス・アーキテクチャ**
-    *   インフラのデプロイにおいて、Azure Managed IdentitiesとRBACを採用。コンテナからKey Vaultへのアクセスにおいて、パスワードやアクセスキーの管理を排除しました。APIキーはBicepのパラメータとして渡すのではなく、Key Vault内のシークレットを直接参照（Secret Reference）して環境変数に注入しています。
+    *   Azure User-Assigned Managed Identities と RBAC を採用。。コンテナからKey Vaultへのアクセスにおいて、パスワードやアクセスキーの管理を排除しました。APIキーはBicepのパラメータとして渡すのではなく、Key Vault内のシークレットを直接参照（Secret Reference）して環境変数に注入しています。
 *   **🕰️ FinOps と Silent Drop による徹底したコスト保護**
     *   バックエンドコンテナにKEDA (Kubernetes Event-driven Autoscaling) のCronスケーラーを導入し、「営業時間（8:00-24:00）のみ1台稼働、深夜帯はゼロスケール」というコスト最適化を実現。さらに、DDoSやスパムによるAPI課金増大を防ぐため、アプリケーション層で異常な連続送信を検知し、エラーすら返さずに無音で破棄する「Silent Drop」を実装しています。
+*   **🤖 GitHub Actions による完全自動化 CI/CD パイプライン**
+    *   `main` ブランチへの Push をトリガーとして、GitHub 上のホステッドランナーでコンテナイメージのビルドを実行。Azure 側のコンピューティング課金を発生させず（ACR Tasks 不使用）、安全な OIDC 認証（または Service Principal）経由で Azure Container Registry へのプッシュと Container Apps のリビジョン更新を完全自動化しています。
 ---
 
 ## 🛠 Tech Stack & Environment
@@ -137,6 +139,10 @@ graph LR
         Dev["Local PC<br>Docker Compose"]
     end
 
+    subgraph CI_CD ["CI/CD パイプライン"]
+        GitHub["GitHub Actions<br>ホステッドランナー"]
+    end
+
     subgraph AzureCloud ["Microsoft Azure"]
         
         subgraph FrontendZone ["フロントエンド層 / BFF"]
@@ -160,7 +166,8 @@ graph LR
     end
 
     %% デプロイメントフロー
-    Dev -->|"Docker Push"| ACR
+    Dev -->|"git push (main)"| GitHub
+    GitHub -->|"Docker Build & Push"| ACR
     ACR -.->|"Image Pull"| ACA_Front
     ACR -.->|"Image Pull"| ACA_Back
     AKV -.->|"Managed Identity経由でSecretRef注入"| ACA_Back
@@ -183,13 +190,16 @@ graph LR
     classDef finops fill:#fef08a,stroke:#d97706,stroke-width:2px,color:#0f172a;
     classDef storage fill:#f3e8ff,stroke:#9333ea,stroke-width:2px,color:#0f172a;
     classDef internal fill:#f1f5f9,stroke:#64748b,stroke-width:2px,color:#0f172a,stroke-dasharray: 5 5;
+    classDef github fill:#e2e8f0,stroke:#1e293b,stroke-width:2px,color:#0f172a;
     
     class ACR,ACA_Front azure;
     class AKV storage;
     class AppInsights,LogAnalytics,Budget finops;
     class ACA_Back internal;
+    class GitHub github;
 
-    %% サブグラフへのスタイル直接指定
+    %% サブグラフへのスタイル指定
+    style CI_CD fill:#f8fafc,stroke:#1e293b,stroke-width:2px,color:#0f172a;
     style BackendZone fill:#f8fafc,stroke:#94a3b8,stroke-width:2px,color:#0f172a,stroke-dasharray: 5 5;
     style FinOpsZone fill:#fef08a,stroke:#d97706,stroke-width:2px,color:#0f172a;
 ```
@@ -198,6 +208,9 @@ graph LR
 
 ```text
 Drill-Talk-Portfolio/
+├── .github/                 # GitHub Actions 設定
+│   └── workflows/
+│       └── deploy.yml       # Azureへの自動デプロイ定義 (CI/CD)
 ├── frontend/                # Next.js 16 + TypeScript
 │   ├── app/                 # App Router (Pages, Layouts)
 │   ├── components/          # React components (ManabuAvatar, NotebookModal, etc.)
@@ -212,8 +225,9 @@ Drill-Talk-Portfolio/
 │   ├── config.py            # Pydanticによる環境変数・CORSの堅牢なバリデーション
 │   ├── requirements.lock    # Python 依存関係ロック
 │   └── Dockerfile           # Slim Python image (非root実行・セキュリティ強化)
-├── docker-compose.yml       # ローカル開発・本番共通環境
+├── docker-compose.yml       # ローカル開発用の環境一括起動定義（本番と同一のコンテナ構成を再現）
 ├── dev_log.md               # 開発・トラブルシューティング記録
+├── main.bicep               # 自動デプロイのための Bicep テンプレート
 └── README.md                # 本ドキュメント
 ```
 
@@ -237,6 +251,16 @@ Docker Compose を使用して、フロントエンド（3000番）とバック�
 ビルド完了後、ブラウザで以下のURLにアクセスしてください。
 * Frontend (UI): http://localhost:3000
 * Backend (API Docs): http://localhost:8000/docs
+
+### ☁️ Cloud Deployment (Azure)
+本プロジェクトの本番環境（Production）は、BicepによるInfrastructure as Code (IaC) と GitHub Actions を用いてデプロイされています。
+1. **インフラのプロビジョニング:** `main.bicep` を用いて、Azure CLI経由でリソース（Container Apps, ACR, Key Vault, Log Analytics）を自動構築。(リソースグループ名は rg-drilltalk-v3.2 （または自身の指定した名前）にする必要がある)
+2. **シークレットの注入:** 本番用の `GEMINI_API_KEY` 等は、手動で Azure Key Vault に格納し、ゼロ・シークレットを担保。
+3. **継続的デプロイメント:** `.github/workflows/deploy.yml` により、コード更新時に自動ビルド・デプロイが実行されます。
+
+**【必須セットアップ】**
+- **GitHub Secrets:** `AZURE_CREDENTIALS` (Azure認証用JSON)、`UNIQUE_SUFFIX` (ACR識別子) を登録。
+- **環境変数:** BFF/CORS保護のため、Container Appsの `ALLOWED_ORIGINS_RAW` にフロントエンドURLを設定。
 
 ## 🗺️ Future Roadmap (v4.0 and beyond)
 

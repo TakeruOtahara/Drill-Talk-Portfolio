@@ -1,0 +1,55 @@
+name: Deploy Drill-Talk to Azure
+
+on:
+  push:
+    branches: [ "main" ] # mainブランチにコードが送られたら起動
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. コードの取得
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Azure へのログイン
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # 3. ACR (コンテナ倉庫) へのログイン
+      - name: Login to ACR
+        run: |
+          az acr login --name crdrilltalkprod${{ secrets.UNIQUE_SUFFIX }}
+
+      # 4. Backend (FastAPI) のビルドとプッシュ
+      - name: Build and push Backend
+        run: |
+          # タグに "latest" も追加しておくと管理が楽になります
+          docker build ./backend -t crdrilltalkprod${{ secrets.UNIQUE_SUFFIX }}.azurecr.io/backend:${{ github.sha }}
+          docker push crdrilltalkprod${{ secrets.UNIQUE_SUFFIX }}.azurecr.io/backend:${{ github.sha }}
+
+      # 5. Frontend (Next.js) のビルドとプッシュ
+      - name: Build and push Frontend
+        run: |
+          docker build ./frontend -t crdrilltalkprod${{ secrets.UNIQUE_SUFFIX }}.azurecr.io/frontend:${{ github.sha }}
+          docker push crdrilltalkprod${{ secrets.UNIQUE_SUFFIX }}.azurecr.io/frontend:${{ github.sha }}
+
+      # 6. Azure Container Apps の中身を更新
+      - name: Update Container Apps
+        run: |
+          # ★修正ポイント：resource-group を "rg-drilltalk-v3.2" に変更
+          az containerapp update \
+            --name aca-drilltalk-prod-backend \
+            --resource-group rg-drilltalk-v3.2 \
+            --image crdrilltalkprod${{ secrets.UNIQUE_SUFFIX }}.azurecr.io/backend:${{ github.sha }}
+          
+          az containerapp update \
+            --name aca-drilltalk-prod-frontend \
+            --resource-group rg-drilltalk-v3.2 \
+            --image crdrilltalkprod${{ secrets.UNIQUE_SUFFIX }}.azurecr.io/frontend:${{ github.sha }}
