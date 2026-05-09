@@ -2,7 +2,7 @@ name: Deploy Drill-Talk to Azure
 
 on:
   push:
-    branches: [ "main" ] # mainブランチにコードが送られたら起動
+    branches: [ "master" ] # mainブランチにコードが送られたら起動
 
 permissions:
   id-token: write
