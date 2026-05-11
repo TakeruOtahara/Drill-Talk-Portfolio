@@ -21,7 +21,6 @@ class GeminiProvider:
         # 🛡️ os.getenv ではなく settings から取得
         # config.py 側でバリデーション済みなので、ここでの個別チェックは不要。
         self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        # 有機化学専攻の君が教えてくれた通り、最新の flash モデルを固定
         self.model_id = "gemini-2.5-flash" 
 
     def _clean_json_string(self, raw_text: str) -> str:

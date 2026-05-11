@@ -10,6 +10,7 @@ import { SquirrelLoader } from "@/components/SquirrelLoader"; // 💡 追加
 import { useRef, useState, useEffect, useCallback } from "react";
 import { RefreshCcw, ShieldCheck, BookOpen, Loader2, MessageSquareText, X } from "lucide-react";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
+import { useIdleTimeout } from "@/hooks/useIdleTimeout";
 
 export default function Home() {
   useEffect(() => {
@@ -48,7 +49,8 @@ export default function Home() {
     isManabuSpeaking, setIsManabuSpeaking,
     questionQueue,
     sendMessage, speak, cancelSpeak,
-    unlockAudio 
+    unlockAudio,
+    isSleeping, pauseConnection, resumeConnection 
   } = useManabu({
     isListening: isListeningState, 
     onError: handleLoadError,
@@ -90,6 +92,14 @@ export default function Home() {
     undefined,       // onInterimResult
     isManabuSpeaking // 🛡️ 第4引数：現在の喋り状態を渡し、エコーバックを物理遮断
   );
+
+  useIdleTimeout(300000, isUserSpeaking, () => {
+    if (lessonStarted && !isFinishing) {
+      console.log("⏸️ 5分間無操作のため、WebSocketを意図的に切断します");
+      if (isListening) toggleListening(); // マイクも安全にオフにする
+      pauseConnection(); // サーバーとの通信を遮断（課金ストップ！）
+    }
+  });
 
   // --- Handlers ---
   const handleStartLesson = async () => {
@@ -238,6 +248,25 @@ export default function Home() {
   return (
     <div className="flex flex-col lg:flex-row min-h-screen bg-zinc-50 font-sans text-slate-900 overflow-x-hidden relative">
       
+      {/* 💡 【追加】スリープ中（節約中）のオーバーレイUI */}
+      {isSleeping && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center text-white">
+          <div className="bg-slate-800 p-8 rounded-3xl max-w-sm text-center shadow-2xl border border-slate-700">
+            <h3 className="text-2xl font-black mb-4">💤 おやすみ中</h3>
+            <p className="text-slate-300 mb-8 font-medium">
+              しばらく操作がなかったため、サーバーとの通信を一時休止しました。<br/>
+              （記録は安全に保存されています）
+            </p>
+            <button 
+              onClick={resumeConnection}
+              className="w-full px-6 py-4 bg-emerald-500 hover:bg-emerald-400 text-white font-black rounded-xl transition-all active:scale-95 shadow-lg shadow-emerald-500/30"
+            >
+              通信を再開する
+            </button>
+          </div>
+        </div>
+      )}
+
       {showTutorial && <TutorialOverlay onComplete={completeTutorial} />}
 
       <main className="flex-1 flex flex-col items-center justify-center p-4 min-h-screen relative bg-white order-1 lg:order-1">

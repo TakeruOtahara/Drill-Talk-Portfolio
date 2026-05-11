@@ -22,10 +22,12 @@ Drill-Talkは、独学者が陥りがちな「分かったつもり」を解消�
     *   Next.jsのサーバーサイド機能（Rewrites/API Routes）をBFF（Backend For Frontend）として活用。ブラウザ側にAPIキーを一切露出させず、サーバー間通信でのみ認証を行う強固なセキュリティ境界を構築しています。
 *   **🔐 マネージドIDとRBACによるパスワードレス・アーキテクチャ**
     *   Azure User-Assigned Managed Identities と RBAC を採用。。コンテナからKey Vaultへのアクセスにおいて、パスワードやアクセスキーの管理を排除しました。APIキーはBicepのパラメータとして渡すのではなく、Key Vault内のシークレットを直接参照（Secret Reference）して環境変数に注入しています。
-*   **🕰️ FinOps と Silent Drop による徹底したコスト保護**
-    *   バックエンドコンテナにKEDA (Kubernetes Event-driven Autoscaling) のCronスケーラーを導入し、「営業時間（8:00-24:00）のみ1台稼働、深夜帯はゼロスケール」というコスト最適化を実現。さらに、DDoSやスパムによるAPI課金増大を防ぐため、アプリケーション層で異常な連続送信を検知し、エラーすら返さずに無音で破棄する「Silent Drop」を実装しています。
+*   **🕰️ FinOps (コスト最適化) と徹底したインフラ保護**
+    *   **バックエンドの自動スケール:** KEDA (Cronスケーラー) を導入し、「営業時間（8:00-24:00）のみ1台稼働、深夜帯はゼロスケール」という基本のコスト最適化を実施。
+    *   **フロントエンド主導の課金ストップ:** ユーザーのタブ放置による「WebSocketのアクティブ課金垂れ流し」を防ぐため、Page Visibility API とユーザー入力監視を統合したタイムアウト機構を実装。5分間の放置で自発的に通信を切断してコンテナを「アイドル状態（約1/10のコスト）」へ移行させ、ユーザーが戻った瞬間にシームレスに記憶を復旧させます。
+    *   **Silent Drop:** DDoSやスパムによるAPI課金増大を防ぐため、異常な連続送信を検知した際、エラーすら返さずに無音で破棄する防波堤をアプリケーション層に設けています。
 *   **🤖 GitHub Actions による完全自動化 CI/CD パイプライン**
-    *   `main` ブランチへの Push をトリガーとして、GitHub 上のホステッドランナーでコンテナイメージのビルドを実行。Azure 側のコンピューティング課金を発生させず（ACR Tasks 不使用）、安全な OIDC 認証（または Service Principal）経由で Azure Container Registry へのプッシュと Container Apps のリビジョン更新を完全自動化しています。
+    *   `master` ブランチへの Push をトリガーとして、GitHub 上のホステッドランナーでコンテナイメージのビルドを実行。Azure 側のコンピューティング課金を発生させず（ACR Tasks 不使用）、安全な OIDC 認証（または Service Principal）経由で Azure Container Registry へのプッシュと Container Apps のリビジョン更新を完全自動化しています。
 ---
 
 ## 🛠 Tech Stack & Environment
@@ -48,9 +50,11 @@ graph TD
         UI["React / Tailwind CSS"]
         VAD["Voice Activity Detection"]
         Storage[("LocalStorage<br>真実のマスター")]
+        IdleMonitor["Idle Monitor<br>(Page Visibility & 入力監視)"]
         
         VAD -->|"マイク制御とエコー防止"| UI
         Storage -.->|"再接続時同期"| UI
+        IdleMonitor -->|"放置検知で意図的切断<br>(FinOps)"| UI
     end
 
     subgraph BFF ["Next.js サーバーサイド"]
@@ -214,7 +218,7 @@ Drill-Talk-Portfolio/
 ├── frontend/                # Next.js 16 + TypeScript
 │   ├── app/                 # App Router (Pages, Layouts)
 │   ├── components/          # React components (ManabuAvatar, NotebookModal, etc.)
-│   ├── hooks/               # Custom Hooks (useManabu, useSpeechToText, etc.)
+│   ├── hooks/               # Custom Hooks (useManabu, useIdleTimeout, useSpeechToText, etc.)
 │   ├── proxy.ts             # WebSocketプロキシ＆認証ヘッダー付与 (Next.js 16仕様)
 │   ├── next.config.ts       # Standaloneコンテナビルド最適化設定
 │   ├── package-lock.json    # 環境再現のための依存関係ロック

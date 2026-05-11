@@ -20,6 +20,9 @@ interface UseManabuReturn {
   speak: (text: string, onEnd?: () => void) => void;
   cancelSpeak: () => void;
   unlockAudio: () => Promise<void>;
+  isSleeping: boolean;
+  pauseConnection: () => void;
+  resumeConnection: () => void;
 }
 
 export const useManabu = ({ 
@@ -45,6 +48,30 @@ export const useManabu = ({
   const questionQueue = useRef<string[]>([]);
   const messageQueue = useRef<string[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
+
+  // スリープ機能用のStateとRef
+  const [isSleeping, setIsSleeping] = useState(false);
+  const isIntentionalClose = useRef(false);
+  const socketInstanceRef = useRef<WebSocket | null>(null);
+  const connectRef = useRef<(() => void) | null>(null);
+
+  // 意図的に接続を切る関数
+  const pauseConnection = useCallback(() => {
+    if (socketInstanceRef.current) {
+      isIntentionalClose.current = true;
+      socketInstanceRef.current.close();
+      setIsSleeping(true);
+    }
+  }, []);
+
+  // 再接続する関数
+  const resumeConnection = useCallback(() => {
+    setIsSleeping(false);
+    isIntentionalClose.current = false;
+    if (connectRef.current) {
+      connectRef.current(); // useEffect内のconnect関数を外から発火
+    }
+  }, []);
 
   // 🔊 音声ロック解除（スマホ対応）
   const unlockAudio = useCallback(async () => {
@@ -106,6 +133,7 @@ export const useManabu = ({
 
       const ws = new WebSocket(wsUrl);
       socketInstance = ws;
+      socketInstanceRef.current = ws; // 外から切断できるようにRefに保存
 
       ws.onopen = () => {
         setSocket(ws);
@@ -188,13 +216,19 @@ export const useManabu = ({
         setIsAnalyzing(false);       // 💡 リスを強制停止
         setIsBackendThinking(false); // 💡 リスを強制停止
         if (pingInterval) clearInterval(pingInterval);
-        reconnectTimeout = setTimeout(connect, 5000);
+        
+        // 💡 変更：意図的な切断でなければ自動再接続する
+        if (!isIntentionalClose.current) {
+          reconnectTimeout = setTimeout(connect, 5000);
+        }
       };
 
       ws.onerror = (err) => {
         console.error("WebSocket Error:", err);
       };
     };
+
+    connectRef.current = connect; // connect関数を外部から呼べるようにRefに保存
 
     connect();
 
@@ -244,6 +278,9 @@ export const useManabu = ({
     isManabuSpeaking, setIsManabuSpeaking,
     questionQueue, 
     sendMessage, speak, cancelSpeak,
-    unlockAudio
+    unlockAudio,
+    isSleeping,
+    pauseConnection,
+    resumeConnection
   };
 };
