@@ -89,7 +89,7 @@ export const useManabu = ({
         source.buffer = buffer;
         source.connect(audioContextRef.current.destination);
         source.start(0);
-        console.log("🔊 Audio System Unlocked");
+        // console.log("🔊 Audio System Unlocked");
       } catch (e) {
         console.error("Audio unlock error:", e);
       }

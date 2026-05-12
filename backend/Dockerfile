@@ -27,4 +27,4 @@ RUN chown -R appuser:appgroup /app
 USER appuser
 
 # 5. アプリケーションを起動（ポート8000で待ち受け）
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

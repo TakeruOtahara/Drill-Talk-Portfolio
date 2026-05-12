@@ -55,3 +55,21 @@ jobs:
             --name aca-drilltalk-prod-frontend \
             --resource-group rg-drilltalk-v3.2 \
             --image crdrilltalkprod${{ secrets.UNIQUE_SUFFIX }}.azurecr.io/frontend:${{ github.sha }}
+
+      # 7. ACRの古いイメージを削除（最新2つを残す）
+      - name: Purge old ACR images
+        run: |
+          ACR_NAME="crdrilltalkprod${{ secrets.UNIQUE_SUFFIX }}"
+          for REPO in "backend" "frontend"; do
+            # 最新の2つを除外した古いタグ一覧を取得
+            TAGS_TO_DELETE=$(az acr repository show-tags --name $ACR_NAME --repository $REPO --orderby time_desc --output tsv | tail -n +3)
+            
+            if [ -n "$TAGS_TO_DELETE" ]; then
+              for TAG in $TAGS_TO_DELETE; do
+                echo "Deleting $REPO:$TAG..."
+                az acr repository delete --name $ACR_NAME --image $REPO:$TAG --yes
+              done
+            else
+              echo "No old images to delete for $REPO."
+            fi
+          done

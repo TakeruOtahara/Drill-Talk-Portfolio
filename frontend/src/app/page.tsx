@@ -95,7 +95,7 @@ export default function Home() {
 
   useIdleTimeout(300000, isUserSpeaking, () => {
     if (lessonStarted && !isFinishing) {
-      console.log("⏸️ 5分間無操作のため、WebSocketを意図的に切断します");
+      // console.log("⏸️ 5分間無操作のため、WebSocketを意図的に切断します");
       if (isListening) toggleListening(); // マイクも安全にオフにする
       pauseConnection(); // サーバーとの通信を遮断（課金ストップ！）
     }

@@ -5,6 +5,9 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.136-009688?logo=fastapi)](https://fastapi.tiangolo.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker)](https://www.docker.com/)
 
+**🚀 Live Demo:** [https://aca-drilltalk-prod-frontend.jollyflower-3069cfc3.japanwest.azurecontainerapps.io](https://aca-drilltalk-prod-frontend.jollyflower-3069cfc3.japanwest.azurecontainerapps.io)
+*(💡 インフラコスト最適化のため、日本時間の 8:00〜24:00 のみ稼働しています)*
+
 > **「教えることは、二度学ぶこと（To teach is to learn twice）」**
 > ファインマン・テクニックに基づく、アウトプット特化型・メタ認知学習プラットフォーム。
 
@@ -28,6 +31,8 @@ Drill-Talkは、独学者が陥りがちな「分かったつもり」を解消�
     *   **Silent Drop:** DDoSやスパムによるAPI課金増大を防ぐため、異常な連続送信を検知した際、エラーすら返さずに無音で破棄する防波堤をアプリケーション層に設けています。
 *   **🤖 GitHub Actions による完全自動化 CI/CD パイプライン**
     *   `master` ブランチへの Push をトリガーとして、GitHub 上のホステッドランナーでコンテナイメージのビルドを実行。Azure 側のコンピューティング課金を発生させず（ACR Tasks 不使用）、安全な OIDC 認証（または Service Principal）経由で Azure Container Registry へのプッシュと Container Apps のリビジョン更新を完全自動化しています。
+*   **ログとストレージの極小化:**
+    *   正常系のアクセスログをアプリケーション層で完全に消音（`--no-access-log` / `WARNING`レベル固定）し、Log Analyticsに1日50MBの物理キャップ（Quota）をBicepで設定。さらにGitHub ActionsでACRの古いコンテナイメージを自動パージ（最新2世代のみ保持）することで、ログ爆発とストレージ超過による「クラウド破産」をアーキテクチャレベルで完全に防いでいます。
 ---
 
 ## 🛠 Tech Stack & Environment
@@ -266,6 +271,21 @@ Docker Compose を使用して、フロントエンド（3000番）とバック�
 - **GitHub Secrets:** `AZURE_CREDENTIALS` (Azure認証用JSON)、`UNIQUE_SUFFIX` (ACR識別子) を登録。
 - **環境変数:** BFF/CORS保護のため、Container Appsの `ALLOWED_ORIGINS_RAW` にフロントエンドURLを設定。
 
+### 💰 Running Cost Estimate (v3.2)
+- **リージョン:** Japan west (西日本)
+- **ユーザー規模:** 月間 30名程度を想定
+ポートフォリオ運用のためのコストは月額合計 約7,530円
+
+| サービス / 内訳 | 月額概算費用 | 計算の根拠・ロジック |
+| :--- | :--- | :--- |
+| **ACA (Backend)** | **¥1,400** | 月300時間アクティブ・月180時間アイドル状態で計算 |
+| **ACA (Frontend)** | **¥1,400** | 月300時間アクティブ・月180時間アイドル状態で計算 |
+| **Container Registry** | **¥750** | Basic ティアの固定費 |
+| **Bandwidth / Key Vault** | **¥20** | 微量の通信と操作 |
+| **Log Analytics** | **¥0** | 1日50MBの物理キャップ ＋ 正常ログ消音設計により無料枠（5GB/月） |
+| **App Insights** | **¥0** | Log Analytics 枠に依存 |
+| **Gemini 2.5 Flash** | **¥3,960~** | 1セッション1.1円として1人1日4セッションで計算 |
+
 ## 🗺️ Future Roadmap (v4.0 and beyond)
 
 本プロジェクトは現在、ブラウザの `localStorage` とコンテナの接続スコープを利用したスタンドアロン環境として稼働していますが、次期バージョン（v4.0以降）では、データ駆動型のパーソナル学習プラットフォームへの進化を計画しています。
@@ -288,4 +308,4 @@ Docker Compose を使用して、フロントエンド（3000番）とバック�
 *   **学習傾向の分析:** 過去の評価ノートを横断的に解析し、「論理展開の飛躍が多い」「特定のキーワードを忘れがちである」といったユーザー固有のブラインドスポットの傾向をグラフ化してフィードバックします。
 
 ## 📓 Developer Log
-詳細な技術選定の理由やトラブルシューティングの軌跡は、開発ログ (dev_log.md) を参照してください。
+詳細な技術選定の理由やトラブルシューティングの軌跡は、[開発ログ (dev_log.md)](./dev_log.md) を参照してください。

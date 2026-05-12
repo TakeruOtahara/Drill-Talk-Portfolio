@@ -1,15 +1,24 @@
 // ============================================================================
-// Drill-Talk v3.2 (True Final) - Infrastructure as Code Template
+// Drill-Talk v3.2 (Public Template)
 // Architecture: Next.js BFF (Gateway) -> Internal VNet -> FastAPI (Backend)
 // Security: Zero-Trust (User-Assigned Managed Identity)
 // Cost: FinOps Optimized (KEDA Cron Scaling + Budget Alerts)
 // ============================================================================
 
+@description('Deployment location')
 param location string = resourceGroup().location
+
+@description('Project name used for resource naming')
 param projectName string = 'drilltalk'
+
+@description('Deployment environment')
 param environment string = 'prod'
-@description('Email address for budget alerts (e.g., admin@example.com)')
-param alertEmail string = 'admin@example.com' // <-- 変更箇所：ご自身のメールアドレスを入れるか、コマンドライン引数で渡してください
+
+@description('Email address for budget alerts')
+param alertEmail string = 'your-email@example.com'
+
+@description('Your name or organization for resource tagging')
+param ownerName string = 'Your Name'
 
 var baseName = '${projectName}-${environment}'
 var uniqueSuffix = uniqueString(resourceGroup().id)
@@ -17,18 +26,18 @@ var acrName = 'cr${projectName}${environment}${uniqueSuffix}'
 var kvName = take('kv-${baseName}-${uniqueSuffix}', 24)
 
 var defaultTags = {
-  Project: 'drilltalk'
-  Environment: 'prod'
+  Project: projectName
+  Environment: environment
   ManagedBy: 'Bicep'
-  Owner: 'Administrator' // <-- 変更箇所：一般的な名称に変更
+  Owner: ownerName
 }
 
-// 組み込みロールIDの解決
+// Azure Fixed Role IDs
 var acrPullRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
 var kvSecretsUserRole = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 
 // ----------------------------------------------------------------------------
-// 1. 【最優先】共通の身分証（User-Assigned Identity）を作成
+// 1. Identity (User-Assigned Managed Identity)
 // ----------------------------------------------------------------------------
 resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'id-${baseName}'
@@ -37,13 +46,19 @@ resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
 }
 
 // ----------------------------------------------------------------------------
-// 2. 監視・保管・金庫ゾーン
+// 2. Monitoring & Governance (FinOps)
 // ----------------------------------------------------------------------------
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
   name: 'law-${baseName}'
   location: location
   tags: defaultTags
-  properties: { sku: { name: 'PerGB2018' } }
+  properties: { 
+    sku: { name: 'PerGB2018' } 
+    retentionInDays: 30 // Minimize retention cost
+    workspaceCapping: {
+      dailyQuotaGb: json('0.16') // Safety cap to prevent log-driven cost spikes
+    }
+  }
 }
 
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
@@ -51,16 +66,20 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   location: location
   tags: defaultTags
   kind: 'web'
-  properties: { Application_Type: 'web', WorkspaceResourceId: logAnalytics.id }
+  properties: { 
+    Application_Type: 'web'
+    WorkspaceResourceId: logAnalytics.id
+    SamplingPercentage: json('50.0') // Data sampling for cost efficiency
+  }
 }
 
 resource budget 'Microsoft.Consumption/budgets@2021-10-01' = {
   name: 'budget-${projectName}-monthly'
   properties: {
-    amount: 5500
+    amount: 5000 // Set your preferred monthly limit (in JPY/Your Currency)
     timeGrain: 'Monthly'
     category: 'Cost'
-    timePeriod: { startDate: '2024-01-01T00:00:00Z', endDate: '2030-12-31T00:00:00Z' } // <-- 変更箇所：汎用的な期間に変更
+    timePeriod: { startDate: '2026-05-01T00:00:00Z', endDate: '2030-05-01T00:00:00Z' }
     notifications: {
       Warning50: { enabled: true, operator: 'GreaterThan', threshold: 50, contactEmails: [alertEmail] }
       Warning100: { enabled: true, operator: 'GreaterThan', threshold: 100, contactEmails: [alertEmail] }
@@ -68,6 +87,9 @@ resource budget 'Microsoft.Consumption/budgets@2021-10-01' = {
   }
 }
 
+// ----------------------------------------------------------------------------
+// 3. Storage & Security
+// ----------------------------------------------------------------------------
 resource acr 'Microsoft.ContainerRegistry/registries@2023-01-01-preview' = {
   name: acrName
   location: location
@@ -100,10 +122,10 @@ resource secretInternal 'Microsoft.KeyVault/vaults/secrets@2023-02-01' = {
 }
 
 // ----------------------------------------------------------------------------
-// 3. 権限付与
+// 4. RBAC Role Assignments
 // ----------------------------------------------------------------------------
 resource idAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(resourceGroup().id, managedIdentity.id, 'acrPull-v32-done')
+  name: guid(resourceGroup().id, managedIdentity.id, 'acrPull-role')
   scope: acr
   properties: {
     roleDefinitionId: acrPullRole
@@ -113,7 +135,7 @@ resource idAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 }
 
 resource idKvAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(resourceGroup().id, managedIdentity.id, 'kvAccess-v32-done')
+  name: guid(resourceGroup().id, managedIdentity.id, 'kvAccess-role')
   scope: keyVault
   properties: {
     roleDefinitionId: kvSecretsUserRole
@@ -123,7 +145,7 @@ resource idKvAccess 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 }
 
 // ----------------------------------------------------------------------------
-// 4. アプリケーションゾーン
+// 5. Container Apps Infrastructure
 // ----------------------------------------------------------------------------
 resource containerAppEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   name: 'cae-${baseName}'
@@ -140,6 +162,7 @@ resource containerAppEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   }
 }
 
+// Backend (FastAPI)
 resource backendApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: 'aca-${baseName}-backend'
   location: location
@@ -184,6 +207,7 @@ resource backendApp 'Microsoft.App/containerApps@2023-05-01' = {
   dependsOn: [ idKvAccess, idAcrPull, secretGemini, secretInternal ]
 }
 
+// Frontend (Next.js)
 resource frontendApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: 'aca-${baseName}-frontend'
   location: location

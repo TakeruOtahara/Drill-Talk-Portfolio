@@ -16,14 +16,23 @@ from config import settings
 SPAM_COOLDOWN_SECONDS = 0.5
 
 # ==========================================
-# 💡 構造化ロギングの設定
+# ログを WARNING 以上に絞り込む
 # ==========================================
+# uvicorn自体の起動・エラーログも WARNING 以上にする
+logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
+# アクセスログ（200 OKとか）を黙らせる
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+# アプリ全体の基本レベルを WARNING に設定（INFO は出力されなくなる）
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING, # INFO から WARNING に変更
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     stream=sys.stdout
 )
 logger = logging.getLogger("drilltalk")
+
+# 明示的にこのロガーもレベルを固定
+logger.setLevel(logging.WARNING)
 
 app = FastAPI()
 
