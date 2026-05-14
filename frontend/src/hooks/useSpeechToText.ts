@@ -5,7 +5,8 @@ export const useSpeechToText = (
   onFinalTranscript: (text: string) => void,
   onSpeechStart?: () => void,
   onInterimResult?: (text: string) => void,
-  isManabuSpeaking: boolean = false // 💡 引数に追加：マナブ君の喋り状態
+  isManabuSpeaking: boolean = false,
+  onError?: (error: any) => void // 💡 修正ポイント①：5個目の引数としてエラーハンドラを拡張
 ) => {
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
@@ -15,7 +16,8 @@ export const useSpeechToText = (
     onFinalTranscript, 
     onSpeechStart, 
     onInterimResult,
-    isManabuSpeaking 
+    isManabuSpeaking,
+    onError // 💡 修正ポイント②：Refにも保持させて最新のデバッグ関数を常に追えるように
   });
 
   useEffect(() => {
@@ -23,9 +25,10 @@ export const useSpeechToText = (
       onFinalTranscript, 
       onSpeechStart, 
       onInterimResult, 
-      isManabuSpeaking 
+      isManabuSpeaking,
+      onError 
     };
-  }, [onFinalTranscript, onSpeechStart, onInterimResult, isManabuSpeaking]);
+  }, [onFinalTranscript, onSpeechStart, onInterimResult, isManabuSpeaking, onError]);
 
   // 認識オブジェクトの初期化
   useEffect(() => {
@@ -36,6 +39,11 @@ export const useSpeechToText = (
     recognition.lang = "ja-JP";
     recognition.continuous = true;
     recognition.interimResults = true;
+
+    // 💡 修正ポイント③：ブラウザの音声認識エラーを検知し、画面のデバッグパネルに即座に流す
+    recognition.onerror = (event: any) => {
+      refs.current.onError?.(event);
+    };
 
     recognition.onsoundstart = () => {
       // 🛡️ ガード：マナブが喋っている時はイベントを無視
