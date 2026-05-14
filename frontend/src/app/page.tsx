@@ -31,7 +31,9 @@ export default function Home() {
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [memoText, setMemoText] = useState("");
   const [isMemoOpen, setIsMemoOpen] = useState(false);
-  const isUserSpeaking = useVoiceActivity(isListeningState);
+  // 一時的にコメントアウトして、マイクを音声認識（STT）に一本化してみる
+// const isUserSpeaking = useVoiceActivity(isListeningState);
+  const isUserSpeaking = false; // ダミーで常に喋っていないことにする
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resetCallbackRef = useRef<() => void>(() => {});
