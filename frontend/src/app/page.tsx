@@ -8,7 +8,7 @@ import { NotebookModal } from "@/components/NotebookModal";
 import { TutorialOverlay } from "@/components/TutorialOverlay";
 import { SquirrelLoader } from "@/components/SquirrelLoader"; 
 import { useRef, useState, useEffect, useCallback } from "react";
-import { RefreshCcw, ShieldCheck, BookOpen, Loader2, MessageSquareText, X } from "lucide-react";
+import { RefreshCcw, ShieldCheck, BookOpen, Loader2, MessageSquareText, X, AlertCircle } from "lucide-react";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
 import { useIdleTimeout } from "@/hooks/useIdleTimeout";
 
@@ -34,15 +34,17 @@ export default function Home() {
   // 検証のためVAD（アバターの上下運動）はオフのまま維持します
   const isUserSpeaking = false; 
 
-  // 💡 【超強化・視覚化デバッグ用ステート】
+  // 💡 【視覚化デバッグ用ステート】
   const [interimText, setInterimText] = useState("");
   const [lastSentText, setLastSentText] = useState("（まだ送信していません）");
   const [sttError, setSttError] = useState("なし (NO_ERROR)");
 
+  // 💡 【追加】マナブ君からの救済ダイアログ表示用フラグ
+  const [showAudioAlert, setShowAudioAlert] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resetCallbackRef = useRef<() => void>(() => {});
 
-  // エラーハンドラ：解析失敗時に状態を戻す
   const handleLoadError = useCallback(() => {
     setLessonStarted(false);
   }, []);
@@ -64,49 +66,43 @@ export default function Home() {
   });
 
   const { isListening, toggleListening } = useSpeechToText(
-    // ① 確定したテキストが来た時（Final）
+    // ① 確定結果
     (text) => {
       if (isManabuSpeaking || isFinishing) return;
-      
       setLastSentText(text);
-      setInterimText(""); // 確定したのでリセット
-
+      setInterimText("");
       const hasQueuedQuestion = questionQueue.current.length > 0;
       sendMessage("USER_TALK", { 
         text, 
         skip_reaction: hasQueuedQuestion || isBackendThinking 
       });
-
       if (hasQueuedQuestion) {
         const questionText = questionQueue.current.shift();
         setIsManabuSpeaking(true);
         if (questionText) {
-            speak(questionText, () => {
-                setIsManabuSpeaking(false);
-            });
+            speak(questionText, () => { setIsManabuSpeaking(false); });
         }
       } else if (!isBackendThinking) {
         setIsBackendThinking(true);
       }
     },
-    // ② ユーザーが喋り始めた時
+    // ② 発話開始時
     () => { 
-      if (!isBackendThinking && isListening && !isManabuSpeaking) {
-        cancelSpeak(); 
-      }
+      if (!isBackendThinking && isListening && !isManabuSpeaking) { cancelSpeak(); }
     },
-    // ③ 💡 喋っている途中の文字（Interim）をリアルタイムに画面へ同期
-    (text) => {
-      setInterimText(text);
-    },
+    // ③ 途中経過
+    (text) => { setInterimText(text); },
     // ④ エコーバック遮断フラグ
     isManabuSpeaking,
-    // ⑤ 💡 【追加】SpeechRecognitionのクラッシュ理由を画面に捉えるエラーハンドラ
+    // ⑤ 💡 エラーキャッチ：service-not-allowed を検知したら自動で救済ダイアログを開く
     (errorEvent: any) => {
       console.error("🚨 STT Error Captured:", errorEvent);
-      // エラーオブジェクトからエラー文字列を抽出してステートに叩き込む
       const errorMsg = errorEvent?.error || errorEvent?.type || JSON.stringify(errorEvent);
       setSttError(errorMsg);
+
+      if (errorMsg === "service-not-allowed") {
+        setShowAudioAlert(true);
+      }
     }
   );
 
@@ -117,7 +113,6 @@ export default function Home() {
     }
   });
 
-  // --- Handlers ---
   const handleStartLesson = async () => {
     await unlockAudio(); 
     setLessonStarted(true);
@@ -166,7 +161,6 @@ export default function Home() {
     });
   };
 
-  // ライフサイクル：LocalStorageからの復旧
   useEffect(() => {
     const savedStructured = localStorage.getItem("dt_structured");
     const savedOriginal = localStorage.getItem("dt_original");
@@ -194,10 +188,8 @@ export default function Home() {
     setShowTutorial(false);
   };
 
-  // 意思としての isListening を state に同期
   useEffect(() => { setIsListeningState(isListening); }, [isListening]);
 
-  // タイマー
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (isListening && !isManabuSpeaking && !isFinishing && timeLeft > 0) {
@@ -264,20 +256,43 @@ export default function Home() {
   return (
     <div className="flex flex-col lg:flex-row min-h-screen bg-zinc-50 font-sans text-slate-900 overflow-x-hidden relative">
       
-      {/* 💡 【最強・音声同期デバッグパネル】レッスン開始後に画面左上に絶対固定 */}
+      {/* 💡 【追加】📱 マナブ君からの救済ダイアログ（モーダルUI） */}
+      {showAudioAlert && (
+        <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 lg:p-8 shadow-2xl border border-slate-100 flex flex-col items-center text-center animate-in zoom-in-95 duration-200">
+            <div className="w-14 h-14 bg-amber-50 rounded-full flex items-center justify-center text-amber-500 mb-4">
+              <AlertCircle className="w-8 h-8" />
+            </div>
+            
+            <h3 className="text-xl font-black text-slate-800 mb-2">📱 マナブ君からのメッセージ</h3>
+            <p className="text-sm font-bold text-amber-600 bg-amber-50/70 px-3 py-1.5 rounded-xl mb-4">
+              音声認識サービスがブラウザでブロックされているようです。
+            </p>
+            
+            <p className="text-zinc-500 text-xs font-medium text-left leading-relaxed bg-zinc-50 p-4 rounded-2xl border border-zinc-100 mb-6">
+              iPhoneの<span className="font-bold text-slate-700">「設定」アプリ</span> ➔ <span className="font-bold text-slate-700">「プライバシーとセキュリティ」</span> ➔ <span className="font-bold text-slate-700">「音声認識」</span>で、お使いのブラウザ（Safari/Chrome）のスイッチがオンになっているか確認してください。
+            </p>
+            
+            <button 
+              onClick={() => setShowAudioAlert(false)}
+              className="w-full px-6 py-4 bg-slate-900 hover:bg-slate-800 text-white font-black rounded-xl transition-all active:scale-95 shadow-lg shadow-slate-900/10"
+            >
+              わかった
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 音声状態デバッグパネル */}
       {lessonStarted && (
-        <div className="fixed top-4 left-4 z-[999] bg-slate-950/95 text-lime-400 p-4 rounded-2xl font-mono text-xs max-w-xs sm:max-w-md border border-lime-500/40 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-4 duration-300">
+        <div className="fixed top-4 left-4 z-[999] bg-slate-950/95 text-lime-400 p-4 rounded-2xl font-mono text-xs max-w-xs sm:max-w-md border border-lime-500/40 shadow-2xl backdrop-blur-md">
           <p className="text-white font-black mb-1 border-b border-slate-800 pb-1 text-center tracking-wide">🎤 AUDIO SYNC DEBUG</p>
-          
-          {/* ① ブラウザが吐き出したエラーコード */}
           <div className="mb-2 border-b border-slate-900 pb-1.5">
             <span className="text-red-400 font-bold">⚠️ ブラウザエラー (Error):</span>
             <p className="text-red-300 font-black bg-red-950/50 px-1.5 py-0.5 rounded mt-0.5 border border-red-900/30">
               {sttError}
             </p>
           </div>
-
-          {/* ② 内部フラグの状態（ここがバッティングしていないか目視する） */}
           <div className="grid grid-cols-2 gap-2 mb-2 border-b border-slate-900 pb-1.5 text-[10px]">
             <div>
               <span className="text-slate-400">マイク状態 (isListening):</span>
@@ -292,16 +307,12 @@ export default function Home() {
               </p>
             </div>
           </div>
-
-          {/* ③ リアルタイムの途中認識結果 */}
           <div className="mb-2">
             <span className="text-slate-400">マイク認識中 (Interim):</span>
             <p className="text-amber-300 min-h-[1.5rem] bg-slate-900 p-1.5 rounded mt-0.5 whitespace-pre-wrap border border-slate-800">
               {interimText || "（声を出してください）"}
             </p>
           </div>
-
-          {/* ④ バックエンドに飛んだ最後の確定テキスト */}
           <div>
             <span className="text-slate-400">前回送信データ (Final):</span>
             <p className="text-emerald-300 bg-slate-900 p-1.5 rounded mt-0.5 whitespace-pre-wrap border border-slate-800">
@@ -332,7 +343,6 @@ export default function Home() {
       {showTutorial && <TutorialOverlay onComplete={completeTutorial} />}
 
       <main className="flex-1 flex flex-col items-center justify-center p-4 min-h-screen relative bg-white order-1 lg:order-1">
-        
         {lessonStarted && (
           <div className="absolute top-4 lg:top-8 text-4xl lg:text-5xl font-mono font-bold text-slate-300 tracking-tighter">
             {Math.floor(timeLeft/60)}:{(timeLeft%60).toString().padStart(2, "0")}
@@ -340,18 +350,15 @@ export default function Home() {
         )}
 
         <div className="w-full max-w-4xl flex flex-col items-center justify-center gap-8 lg:gap-12 flex-1 py-12">
-          
           <div className="text-center w-48 lg:w-64 flex-shrink-0 animate-in fade-in zoom-in duration-700 relative">
             <ManabuAvatar 
               emotion={isAnalyzing ? "confused" : (isBackendThinking || isFinishing ? "excited" : emotion)} 
               isListening={isListening && !isBackendThinking && !isManabuSpeaking}
               className="w-full h-auto drop-shadow-2xl relative z-10" 
             />
-            
             {isListening && !isBackendThinking && !isManabuSpeaking && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 lg:w-96 lg:h-96 bg-blue-600 rounded-full blur-[60px] opacity-30 animate-pulse z-0"></div>
             )}
-            
             {isManabuSpeaking && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 lg:w-96 lg:h-96 bg-emerald-500 rounded-full blur-[60px] opacity-30 animate-pulse z-0"></div>
             )}

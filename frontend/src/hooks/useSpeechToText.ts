@@ -6,18 +6,22 @@ export const useSpeechToText = (
   onSpeechStart?: () => void,
   onInterimResult?: (text: string) => void,
   isManabuSpeaking: boolean = false,
-  onError?: (error: any) => void // 💡 修正ポイント①：5個目の引数としてエラーハンドラを拡張
+  onError?: (error: any) => void // 💡 5つ目の引数としてエラーハンドラを拡張
 ) => {
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
 
-  // 💡 コールバックと「喋り中フラグ」を Ref で保持（クロージャ問題/最新値参照の解決）
+  // 💡 物理的にブラウザのマイクが「完全に動いているか」を追跡する鉄壁のフラグ
+  const isEngineActiveRef = useRef(false);
+  // 💡 命令が衝突して壊れるのを防ぐためのトランザクションロック
+  const isTransitioningRef = useRef(false);
+
   const refs = useRef({ 
     onFinalTranscript, 
     onSpeechStart, 
     onInterimResult,
     isManabuSpeaking,
-    onError // 💡 修正ポイント②：Refにも保持させて最新のデバッグ関数を常に追えるように
+    onError 
   });
 
   useEffect(() => {
@@ -30,6 +34,29 @@ export const useSpeechToText = (
     };
   }, [onFinalTranscript, onSpeechStart, onInterimResult, isManabuSpeaking, onError]);
 
+  // 物理的なマイク起動処理（安全弁付き）
+  const safeStart = useCallback(() => {
+    if (!recognitionRef.current || isEngineActiveRef.current || isTransitioningRef.current) return;
+    try {
+      isTransitioningRef.current = true;
+      recognitionRef.current.start();
+    } catch (e) {
+      console.warn("⚠️ 重複スタートを物理ガードで回避しました");
+      isTransitioningRef.current = false;
+    }
+  }, []);
+
+  // 物理的なマイク停止処理（安全弁付き）
+  const safeAbort = useCallback(() => {
+    if (!recognitionRef.current || isTransitioningRef.current) return;
+    try {
+      isTransitioningRef.current = true;
+      recognitionRef.current.abort();
+    } catch (e) {
+      isTransitioningRef.current = false;
+    }
+  }, []);
+
   // 認識オブジェクトの初期化
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -40,19 +67,26 @@ export const useSpeechToText = (
     recognition.continuous = true;
     recognition.interimResults = true;
 
-    // 💡 修正ポイント③：ブラウザの音声認識エラーを検知し、画面のデバッグパネルに即座に流す
+    // 物理的にエンジンが起動を完了した瞬間
+    recognition.onstart = () => {
+      isEngineActiveRef.current = true;
+      isTransitioningRef.current = false;
+    };
+
     recognition.onerror = (event: any) => {
-      refs.current.onError?.(event);
+      isTransitioningRef.current = false;
+      // aborted（手動停止）以外の深刻なエラーだけを画面に通知
+      if (event.error !== "aborted") {
+        refs.current.onError?.(event);
+      }
     };
 
     recognition.onsoundstart = () => {
-      // 🛡️ ガード：マナブが喋っている時はイベントを無視
       if (refs.current.isManabuSpeaking) return;
       refs.current.onSpeechStart?.();
     };
 
     recognition.onresult = (event: any) => {
-      // 🛡️ 【ガード1】マナブが発言中なら、入力を即座に破棄
       if (refs.current.isManabuSpeaking) return;
 
       let interimTranscript = "";
@@ -67,63 +101,45 @@ export const useSpeechToText = (
         }
       }
 
-      if (finalTranscript) {
-        refs.current.onFinalTranscript(finalTranscript);
-      }
-      if (interimTranscript) {
-        refs.current.onInterimResult?.(interimTranscript);
-      }
+      if (finalTranscript) refs.current.onFinalTranscript(finalTranscript);
+      if (interimTranscript) refs.current.onInterimResult?.(interimTranscript);
     };
 
+    // 物理的にエンジンが完全に停止を完了した瞬間
     recognition.onend = () => {
-      // 🛡️ 【ガード2】マナブが喋っていない、かつONの状態なら自動再開
-      // (Speech APIは沈黙で切れるため、isListeningがtrueならループさせる)
+      isEngineActiveRef.current = false;
+      isTransitioningRef.current = false;
+
+      // 🔄 ループ再開処理も、完全にエンジンが「空っぽ」になったこの安全な瞬間だけで判定する
       if (isListening && !refs.current.isManabuSpeaking) {
-        try {
-          recognition.start();
-        } catch (e) {
-          // すでに開始されている等のエラーは無視
-        }
+        safeStart();
       }
     };
 
     recognitionRef.current = recognition;
-  }, [isListening]); // isListeningが変わるたびにonendの挙動を最新にする
+  }, [isListening, safeStart]);
 
-  // 認識の開始・停止（ユーザー操作用）
+  // 認識の開始・停止（ユーザーがボタンを押したとき）
   const toggleListening = useCallback(() => {
     if (isListening) {
-      // abort() を使うことで、中途半端なバッファを破棄して即座に止める
-      recognitionRef.current?.abort();
       setIsListening(false);
+      safeAbort();
     } else {
-      try {
-        recognitionRef.current?.start();
-        setIsListening(true);
-      } catch (e) {
-        console.error("Speech recognition start error:", e);
-      }
+      setIsListening(true);
+      safeStart();
     }
-  }, [isListening]);
+  }, [isListening, safeStart, safeAbort]);
 
-  // 🛡️ 【ガード3】マナブが喋り始めた瞬間に、物理的にマイクの認識を制御する
+  // 🛡️ マナブ君の発言状態（裏での自動ON/OFF）と物理マイクを完全に同期
   useEffect(() => {
     if (isManabuSpeaking) {
-      // マナブが喋りだしたら即座に認識を強制中断（エコーバック防止）
-      if (recognitionRef.current) {
-        recognitionRef.current.abort();
-      }
+      safeAbort();
     } else {
-      // マナブが喋り終わり、かつユーザーがONにしていたなら再開
-      if (isListening && recognitionRef.current) {
-        try {
-          recognitionRef.current.start();
-        } catch (e) {
-          // 重複スタート防止
-        }
+      if (isListening) {
+        safeStart();
       }
     }
-  }, [isManabuSpeaking, isListening]);
+  }, [isManabuSpeaking, isListening, safeStart, safeAbort]);
 
   return { isListening, toggleListening };
 };
