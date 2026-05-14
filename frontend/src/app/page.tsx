@@ -31,20 +31,23 @@ export default function Home() {
   const [memoText, setMemoText] = useState("");
   const [isMemoOpen, setIsMemoOpen] = useState(false);
   
-  // VADは検証のためオフのままにします
+  // 検証のためVAD（アバターの上下運動）はオフのまま維持します
   const isUserSpeaking = false; 
 
-  // 💡 【デバッグ用ステート】ブラウザが認識した文字を強制的に溜める
+  // 💡 【超強化・視覚化デバッグ用ステート】
   const [interimText, setInterimText] = useState("");
   const [lastSentText, setLastSentText] = useState("（まだ送信していません）");
+  const [sttError, setSttError] = useState("なし (NO_ERROR)");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resetCallbackRef = useRef<() => void>(() => {});
 
+  // エラーハンドラ：解析失敗時に状態を戻す
   const handleLoadError = useCallback(() => {
     setLessonStarted(false);
   }, []);
 
+  // --- Custom Hooks ---
   const { 
     notebook, missingPoints, misconceptions, setNotebook,
     emotion, isAnalyzing, setIsAnalyzing, 
@@ -61,11 +64,10 @@ export default function Home() {
   });
 
   const { isListening, toggleListening } = useSpeechToText(
-    // ① 確定したテキストが来た時
+    // ① 確定したテキストが来た時（Final）
     (text) => {
       if (isManabuSpeaking || isFinishing) return;
       
-      // 💡 デバッグ用：送信しようとしたテキストを記録
       setLastSentText(text);
       setInterimText(""); // 確定したのでリセット
 
@@ -93,12 +95,19 @@ export default function Home() {
         cancelSpeak(); 
       }
     },
-    // ③ 💡 【デバッグ用】喋っている途中の文字をリアルタイムに画面に反映
+    // ③ 💡 喋っている途中の文字（Interim）をリアルタイムに画面へ同期
     (text) => {
       setInterimText(text);
     },
-    // ④ エコーバック遮断
-    isManabuSpeaking 
+    // ④ エコーバック遮断フラグ
+    isManabuSpeaking,
+    // ⑤ 💡 【追加】SpeechRecognitionのクラッシュ理由を画面に捉えるエラーハンドラ
+    (errorEvent: any) => {
+      console.error("🚨 STT Error Captured:", errorEvent);
+      // エラーオブジェクトからエラー文字列を抽出してステートに叩き込む
+      const errorMsg = errorEvent?.error || errorEvent?.type || JSON.stringify(errorEvent);
+      setSttError(errorMsg);
+    }
   );
 
   useIdleTimeout(300000, isUserSpeaking, () => {
@@ -108,6 +117,7 @@ export default function Home() {
     }
   });
 
+  // --- Handlers ---
   const handleStartLesson = async () => {
     await unlockAudio(); 
     setLessonStarted(true);
@@ -156,6 +166,7 @@ export default function Home() {
     });
   };
 
+  // ライフサイクル：LocalStorageからの復旧
   useEffect(() => {
     const savedStructured = localStorage.getItem("dt_structured");
     const savedOriginal = localStorage.getItem("dt_original");
@@ -183,8 +194,10 @@ export default function Home() {
     setShowTutorial(false);
   };
 
+  // 意思としての isListening を state に同期
   useEffect(() => { setIsListeningState(isListening); }, [isListening]);
 
+  // タイマー
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (isListening && !isManabuSpeaking && !isFinishing && timeLeft > 0) {
@@ -251,17 +264,49 @@ export default function Home() {
   return (
     <div className="flex flex-col lg:flex-row min-h-screen bg-zinc-50 font-sans text-slate-900 overflow-x-hidden relative">
       
-      {/* 💡 【視覚化デバッグパネル】画面の左上に強制表示 */}
+      {/* 💡 【最強・音声同期デバッグパネル】レッスン開始後に画面左上に絶対固定 */}
       {lessonStarted && (
-        <div className="fixed top-4 left-4 z-[999] bg-slate-950/90 text-lime-400 p-4 rounded-xl font-mono text-xs max-w-xs sm:max-w-md border border-lime-500/30 shadow-2xl backdrop-blur-md">
-          <p className="text-white font-bold mb-1 border-b border-slate-700 pb-1 text-center">🎤 STT AUDIO DEBUG</p>
+        <div className="fixed top-4 left-4 z-[999] bg-slate-950/95 text-lime-400 p-4 rounded-2xl font-mono text-xs max-w-xs sm:max-w-md border border-lime-500/40 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-4 duration-300">
+          <p className="text-white font-black mb-1 border-b border-slate-800 pb-1 text-center tracking-wide">🎤 AUDIO SYNC DEBUG</p>
+          
+          {/* ① ブラウザが吐き出したエラーコード */}
+          <div className="mb-2 border-b border-slate-900 pb-1.5">
+            <span className="text-red-400 font-bold">⚠️ ブラウザエラー (Error):</span>
+            <p className="text-red-300 font-black bg-red-950/50 px-1.5 py-0.5 rounded mt-0.5 border border-red-900/30">
+              {sttError}
+            </p>
+          </div>
+
+          {/* ② 内部フラグの状態（ここがバッティングしていないか目視する） */}
+          <div className="grid grid-cols-2 gap-2 mb-2 border-b border-slate-900 pb-1.5 text-[10px]">
+            <div>
+              <span className="text-slate-400">マイク状態 (isListening):</span>
+              <p className={`font-bold mt-0.5 ${isListening ? "text-emerald-400" : "text-slate-500"}`}>
+                {isListening ? "🟢 ON (認識中)" : "⚪ OFF (停止)"}
+              </p>
+            </div>
+            <div>
+              <span className="text-slate-400">マナブ発言 (Speaking):</span>
+              <p className={`font-bold mt-0.5 ${isManabuSpeaking ? "text-amber-400" : "text-slate-500"}`}>
+                {isManabuSpeaking ? "🟠 TRUE (発声中)" : "⚪ FALSE (沈黙)"}
+              </p>
+            </div>
+          </div>
+
+          {/* ③ リアルタイムの途中認識結果 */}
           <div className="mb-2">
             <span className="text-slate-400">マイク認識中 (Interim):</span>
-            <p className="text-amber-300 min-h-[1.5rem] bg-slate-900 p-1 rounded mt-0.5 whitespace-pre-wrap">{interimText || "（声を出してください）"}</p>
+            <p className="text-amber-300 min-h-[1.5rem] bg-slate-900 p-1.5 rounded mt-0.5 whitespace-pre-wrap border border-slate-800">
+              {interimText || "（声を出してください）"}
+            </p>
           </div>
+
+          {/* ④ バックエンドに飛んだ最後の確定テキスト */}
           <div>
             <span className="text-slate-400">前回送信データ (Final):</span>
-            <p className="text-emerald-300 bg-slate-900 p-1 rounded mt-0.5 whitespace-pre-wrap">{lastSentText}</p>
+            <p className="text-emerald-300 bg-slate-900 p-1.5 rounded mt-0.5 whitespace-pre-wrap border border-slate-800">
+              {lastSentText}
+            </p>
           </div>
         </div>
       )}
