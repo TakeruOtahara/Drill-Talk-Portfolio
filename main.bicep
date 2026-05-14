@@ -189,6 +189,7 @@ resource backendApp 'Microsoft.App/containerApps@2023-05-01' = {
           { name: 'DRILLTALK_API_KEY', secretRef: 'drilltalk-internal-key' }
           { name: 'GEMINI_API_KEY', secretRef: 'gemini-api-key' }
           { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
+          { name: 'ALLOWED_ORIGINS_RAW', value: '*' }
         ]
         resources: { cpu: json('0.25'), memory: '0.5Gi' }
       }]
