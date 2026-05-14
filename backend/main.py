@@ -163,7 +163,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     state["chars_since_last_question"] += len(user_text)
                     
                     if not skip_reaction:
-                        if state["chars_since_last_question"] >= 50 and random.random() < 0.3:
+                        if state["chars_since_last_question"] >= 50 and random.random() < 0.2:
                             question = await ai_brain.generate_student_question(
                                 " ".join(state["lecture_history"]), 
                                 state["structured_original"]
@@ -174,7 +174,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "message": question,
                                 "emotion": "confused"
                             })
-                        elif random.random() < 0.5:
+                        elif random.random() < 0.2:
                             reaction = random.choice(STATIC_BACKCHANNELS)
                             await websocket.send_json({
                                 "type": "REACTION",

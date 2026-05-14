@@ -31,15 +31,11 @@ export default function Home() {
   const [memoText, setMemoText] = useState("");
   const [isMemoOpen, setIsMemoOpen] = useState(false);
   
-  // 検証のためVAD（アバターの上下運動）はオフのまま維持します
-  const isUserSpeaking = false; 
+  // フックの防弾化によりマイクのバッティングが無くなったため、
+  // ユーザーの声に合わせてマナブ君が生き生きと動くVADアニメーションを安全に復活
+  const isUserSpeaking = useVoiceActivity(isListeningState); 
 
-  // 💡 【視覚化デバッグ用ステート】
-  const [interimText, setInterimText] = useState("");
-  const [lastSentText, setLastSentText] = useState("（まだ送信していません）");
-  const [sttError, setSttError] = useState("なし (NO_ERROR)");
-
-  // 💡 【追加】マナブ君からの救済ダイアログ表示用フラグ
+  // スマホの「音声認識オフ」を検知して救うためのアラート用フラグ
   const [showAudioAlert, setShowAudioAlert] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -66,11 +62,9 @@ export default function Home() {
   });
 
   const { isListening, toggleListening } = useSpeechToText(
-    // ① 確定結果
+    // ① 確定した音声の送信
     (text) => {
       if (isManabuSpeaking || isFinishing) return;
-      setLastSentText(text);
-      setInterimText("");
       const hasQueuedQuestion = questionQueue.current.length > 0;
       sendMessage("USER_TALK", { 
         text, 
@@ -86,20 +80,18 @@ export default function Home() {
         setIsBackendThinking(true);
       }
     },
-    // ② 発話開始時
+    // ② ユーザー発話開始時
     () => { 
       if (!isBackendThinking && isListening && !isManabuSpeaking) { cancelSpeak(); }
     },
-    // ③ 途中経過
-    (text) => { setInterimText(text); },
-    // ④ エコーバック遮断フラグ
+    // ③ 途中経過表示（画面のデバッグ文字を削ったため、スマートに undefined を指定）
+    undefined, 
+    // ④ エコーバック物理遮断フラグ
     isManabuSpeaking,
-    // ⑤ 💡 エラーキャッチ：service-not-allowed を検知したら自動で救済ダイアログを開く
+    // ⑤ 🛡️ スマホの罠ガード：service-not-allowed を検知したら自動でマナブ君の救済案内を開く
     (errorEvent: any) => {
       console.error("🚨 STT Error Captured:", errorEvent);
       const errorMsg = errorEvent?.error || errorEvent?.type || JSON.stringify(errorEvent);
-      setSttError(errorMsg);
-
       if (errorMsg === "service-not-allowed") {
         setShowAudioAlert(true);
       }
@@ -256,7 +248,7 @@ export default function Home() {
   return (
     <div className="flex flex-col lg:flex-row min-h-screen bg-zinc-50 font-sans text-slate-900 overflow-x-hidden relative">
       
-      {/* 💡 【追加】📱 マナブ君からの救済ダイアログ（モーダルUI） */}
+      {/* 🛡️ 📱 スマホの音声認識オフ時の救済モーダル */}
       {showAudioAlert && (
         <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 lg:p-8 shadow-2xl border border-slate-100 flex flex-col items-center text-center animate-in zoom-in-95 duration-200">
@@ -279,45 +271,6 @@ export default function Home() {
             >
               わかった
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* 音声状態デバッグパネル */}
-      {lessonStarted && (
-        <div className="fixed top-4 left-4 z-[999] bg-slate-950/95 text-lime-400 p-4 rounded-2xl font-mono text-xs max-w-xs sm:max-w-md border border-lime-500/40 shadow-2xl backdrop-blur-md">
-          <p className="text-white font-black mb-1 border-b border-slate-800 pb-1 text-center tracking-wide">🎤 AUDIO SYNC DEBUG</p>
-          <div className="mb-2 border-b border-slate-900 pb-1.5">
-            <span className="text-red-400 font-bold">⚠️ ブラウザエラー (Error):</span>
-            <p className="text-red-300 font-black bg-red-950/50 px-1.5 py-0.5 rounded mt-0.5 border border-red-900/30">
-              {sttError}
-            </p>
-          </div>
-          <div className="grid grid-cols-2 gap-2 mb-2 border-b border-slate-900 pb-1.5 text-[10px]">
-            <div>
-              <span className="text-slate-400">マイク状態 (isListening):</span>
-              <p className={`font-bold mt-0.5 ${isListening ? "text-emerald-400" : "text-slate-500"}`}>
-                {isListening ? "🟢 ON (認識中)" : "⚪ OFF (停止)"}
-              </p>
-            </div>
-            <div>
-              <span className="text-slate-400">マナブ発言 (Speaking):</span>
-              <p className={`font-bold mt-0.5 ${isManabuSpeaking ? "text-amber-400" : "text-slate-500"}`}>
-                {isManabuSpeaking ? "🟠 TRUE (発声中)" : "⚪ FALSE (沈黙)"}
-              </p>
-            </div>
-          </div>
-          <div className="mb-2">
-            <span className="text-slate-400">マイク認識中 (Interim):</span>
-            <p className="text-amber-300 min-h-[1.5rem] bg-slate-900 p-1.5 rounded mt-0.5 whitespace-pre-wrap border border-slate-800">
-              {interimText || "（声を出してください）"}
-            </p>
-          </div>
-          <div>
-            <span className="text-slate-400">前回送信データ (Final):</span>
-            <p className="text-emerald-300 bg-slate-900 p-1.5 rounded mt-0.5 whitespace-pre-wrap border border-slate-800">
-              {lastSentText}
-            </p>
           </div>
         </div>
       )}
@@ -421,6 +374,7 @@ export default function Home() {
         </div>
       </main>
 
+      {/* 📱 モバイル用メモ展開ボタン */}
       {lessonStarted && (
         <button 
           onClick={() => setIsMemoOpen(true)}
@@ -430,6 +384,7 @@ export default function Home() {
         </button>
       )}
 
+      {/* 📝 サイドバー：メモ入力欄 */}
       <aside className={`
         fixed lg:static inset-y-0 right-0 w-full sm:w-80 bg-white lg:bg-slate-50/50 border-l p-6 flex flex-col z-50 transition-transform duration-300 ease-in-out
         ${isMemoOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0"}
@@ -456,6 +411,7 @@ export default function Home() {
         </div>
       </aside>
 
+      {/* 📚 チュートリアルボタン */}
       <button 
         onClick={() => setShowTutorial(true)}
         className="fixed bottom-8 lg:right-8 left-8 lg:left-auto p-3.5 bg-white rounded-full shadow-lg border border-slate-100 hover:bg-slate-50 hover:scale-110 transition-all active:scale-90 z-50 text-slate-400 group"
@@ -463,6 +419,7 @@ export default function Home() {
         <BookOpen className="w-6 h-6 group-hover:text-blue-500 transition-colors" />
       </button>
 
+      {/* 📓 評価ノート（モーダル） */}
       {notebook && (
         <NotebookModal 
           notebook={notebook} 
