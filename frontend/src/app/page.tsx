@@ -6,7 +6,7 @@ import { useSpeechToText } from "@/hooks/useSpeechToText";
 import { ManabuAvatar } from "@/components/ManabuAvatar";
 import { NotebookModal } from "@/components/NotebookModal";
 import { TutorialOverlay } from "@/components/TutorialOverlay";
-import { SquirrelLoader } from "@/components/SquirrelLoader"; // 💡 追加
+import { SquirrelLoader } from "@/components/SquirrelLoader"; 
 import { useRef, useState, useEffect, useCallback } from "react";
 import { RefreshCcw, ShieldCheck, BookOpen, Loader2, MessageSquareText, X } from "lucide-react";
 import { useVoiceActivity } from "@/hooks/useVoiceActivity";
@@ -16,8 +16,7 @@ export default function Home() {
   useEffect(() => {
     const protocol = window.location.protocol === "https:" ? "https:" : "http:";
     const pingUrl = `${protocol}//${window.location.host}/ws/manabu`;
-    fetch(pingUrl, { mode: 'no-cors' }).catch(() => {
-    });
+    fetch(pingUrl, { mode: 'no-cors' }).catch(() => {});
   }, []);
   
   const MAX_FILES = 5; 
@@ -31,19 +30,21 @@ export default function Home() {
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [memoText, setMemoText] = useState("");
   const [isMemoOpen, setIsMemoOpen] = useState(false);
-  // 一時的にコメントアウトして、マイクを音声認識（STT）に一本化してみる
-// const isUserSpeaking = useVoiceActivity(isListeningState);
-  const isUserSpeaking = false; // ダミーで常に喋っていないことにする
+  
+  // VADは検証のためオフのままにします
+  const isUserSpeaking = false; 
+
+  // 💡 【デバッグ用ステート】ブラウザが認識した文字を強制的に溜める
+  const [interimText, setInterimText] = useState("");
+  const [lastSentText, setLastSentText] = useState("（まだ送信していません）");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resetCallbackRef = useRef<() => void>(() => {});
 
-  // 💡 エラーハンドラ：解析失敗時に状態を戻す
   const handleLoadError = useCallback(() => {
     setLessonStarted(false);
   }, []);
 
-  // --- Custom Hooks ---
   const { 
     notebook, missingPoints, misconceptions, setNotebook,
     emotion, isAnalyzing, setIsAnalyzing, 
@@ -60,10 +61,14 @@ export default function Home() {
   });
 
   const { isListening, toggleListening } = useSpeechToText(
+    // ① 確定したテキストが来た時
     (text) => {
-      // 🛡️ 内部ガードにより、マナブの発言中や終了処理中は送信しない
       if (isManabuSpeaking || isFinishing) return;
       
+      // 💡 デバッグ用：送信しようとしたテキストを記録
+      setLastSentText(text);
+      setInterimText(""); // 確定したのでリセット
+
       const hasQueuedQuestion = questionQueue.current.length > 0;
       sendMessage("USER_TALK", { 
         text, 
@@ -72,12 +77,9 @@ export default function Home() {
 
       if (hasQueuedQuestion) {
         const questionText = questionQueue.current.shift();
-        
-        // 🛡️ isManabuSpeaking を true にするだけで hooks が物理的にマイクを一時停止する。
         setIsManabuSpeaking(true);
         if (questionText) {
             speak(questionText, () => {
-                // 🛡️ 喋り終われば hooks が isListening を見て自動でマイクを再開する
                 setIsManabuSpeaking(false);
             });
         }
@@ -85,29 +87,31 @@ export default function Home() {
         setIsBackendThinking(true);
       }
     },
-    // onSpeechStart: ユーザーが喋り始めたらマナブを黙らせる
+    // ② ユーザーが喋り始めた時
     () => { 
       if (!isBackendThinking && isListening && !isManabuSpeaking) {
         cancelSpeak(); 
       }
     },
-    undefined,       // onInterimResult
-    isManabuSpeaking // 🛡️ 第4引数：現在の喋り状態を渡し、エコーバックを物理遮断
+    // ③ 💡 【デバッグ用】喋っている途中の文字をリアルタイムに画面に反映
+    (text) => {
+      setInterimText(text);
+    },
+    // ④ エコーバック遮断
+    isManabuSpeaking 
   );
 
   useIdleTimeout(300000, isUserSpeaking, () => {
     if (lessonStarted && !isFinishing) {
-      // console.log("⏸️ 5分間無操作のため、WebSocketを意図的に切断します");
-      if (isListening) toggleListening(); // マイクも安全にオフにする
-      pauseConnection(); // サーバーとの通信を遮断（課金ストップ！）
+      if (isListening) toggleListening(); 
+      pauseConnection(); 
     }
   });
 
-  // --- Handlers ---
   const handleStartLesson = async () => {
     await unlockAudio(); 
     setLessonStarted(true);
-    toggleListening(); // ユーザーの意思として「ON」にする
+    toggleListening(); 
   };
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -152,7 +156,6 @@ export default function Home() {
     });
   };
 
-  // --- 💡 ライフサイクル：LocalStorageからの最強復旧 ---
   useEffect(() => {
     const savedStructured = localStorage.getItem("dt_structured");
     const savedOriginal = localStorage.getItem("dt_original");
@@ -180,10 +183,8 @@ export default function Home() {
     setShowTutorial(false);
   };
 
-  // 意思としての isListening を state に同期
   useEffect(() => { setIsListeningState(isListening); }, [isListening]);
 
-  // 💡 タイマー：毎秒保存してリフレッシュに耐える
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (isListening && !isManabuSpeaking && !isFinishing && timeLeft > 0) {
@@ -241,7 +242,7 @@ export default function Home() {
     if (isListening) toggleListening(); 
     clearAllData();
     sendMessage("RESTART_LECTURE", {}); 
-  }, [cancelSpeak, isListening, toggleListening]); // 依存配列に注意
+  }, [cancelSpeak, isListening, toggleListening]); 
   
   useEffect(() => {
     resetCallbackRef.current = handleForceReset;
@@ -250,7 +251,21 @@ export default function Home() {
   return (
     <div className="flex flex-col lg:flex-row min-h-screen bg-zinc-50 font-sans text-slate-900 overflow-x-hidden relative">
       
-      {/* 💡 【追加】スリープ中（節約中）のオーバーレイUI */}
+      {/* 💡 【視覚化デバッグパネル】画面の左上に強制表示 */}
+      {lessonStarted && (
+        <div className="fixed top-4 left-4 z-[999] bg-slate-950/90 text-lime-400 p-4 rounded-xl font-mono text-xs max-w-xs sm:max-w-md border border-lime-500/30 shadow-2xl backdrop-blur-md">
+          <p className="text-white font-bold mb-1 border-b border-slate-700 pb-1 text-center">🎤 STT AUDIO DEBUG</p>
+          <div className="mb-2">
+            <span className="text-slate-400">マイク認識中 (Interim):</span>
+            <p className="text-amber-300 min-h-[1.5rem] bg-slate-900 p-1 rounded mt-0.5 whitespace-pre-wrap">{interimText || "（声を出してください）"}</p>
+          </div>
+          <div>
+            <span className="text-slate-400">前回送信データ (Final):</span>
+            <p className="text-emerald-300 bg-slate-900 p-1 rounded mt-0.5 whitespace-pre-wrap">{lastSentText}</p>
+          </div>
+        </div>
+      )}
+
       {isSleeping && (
         <div className="fixed inset-0 z-[100] bg-slate-900/80 backdrop-blur-sm flex flex-col items-center justify-center text-white">
           <div className="bg-slate-800 p-8 rounded-3xl max-w-sm text-center shadow-2xl border border-slate-700">
@@ -273,7 +288,6 @@ export default function Home() {
 
       <main className="flex-1 flex flex-col items-center justify-center p-4 min-h-screen relative bg-white order-1 lg:order-1">
         
-        {/* ⏲️ タイマー表示 */}
         {lessonStarted && (
           <div className="absolute top-4 lg:top-8 text-4xl lg:text-5xl font-mono font-bold text-slate-300 tracking-tighter">
             {Math.floor(timeLeft/60)}:{(timeLeft%60).toString().padStart(2, "0")}
@@ -285,16 +299,14 @@ export default function Home() {
           <div className="text-center w-48 lg:w-64 flex-shrink-0 animate-in fade-in zoom-in duration-700 relative">
             <ManabuAvatar 
               emotion={isAnalyzing ? "confused" : (isBackendThinking || isFinishing ? "excited" : emotion)} 
-              isListening={isUserSpeaking && !isBackendThinking && !isManabuSpeaking}
+              isListening={isListening && !isBackendThinking && !isManabuSpeaking}
               className="w-full h-auto drop-shadow-2xl relative z-10" 
             />
             
-            {/* 💡 青い光（ヒアリング中） */}
             {isListening && !isBackendThinking && !isManabuSpeaking && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 lg:w-96 lg:h-96 bg-blue-600 rounded-full blur-[60px] opacity-30 animate-pulse z-0"></div>
             )}
             
-            {/* 💡 緑の光（マナブ君発言中） */}
             {isManabuSpeaking && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 lg:w-96 lg:h-96 bg-emerald-500 rounded-full blur-[60px] opacity-30 animate-pulse z-0"></div>
             )}
@@ -357,7 +369,6 @@ export default function Home() {
         </div>
       </main>
 
-      {/* 📱 モバイル用メモ展開ボタン */}
       {lessonStarted && (
         <button 
           onClick={() => setIsMemoOpen(true)}
@@ -367,7 +378,6 @@ export default function Home() {
         </button>
       )}
 
-      {/* 📝 サイドバー：メモ入力欄 */}
       <aside className={`
         fixed lg:static inset-y-0 right-0 w-full sm:w-80 bg-white lg:bg-slate-50/50 border-l p-6 flex flex-col z-50 transition-transform duration-300 ease-in-out
         ${isMemoOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0"}
@@ -394,7 +404,6 @@ export default function Home() {
         </div>
       </aside>
 
-      {/* 📚 チュートリアルボタン */}
       <button 
         onClick={() => setShowTutorial(true)}
         className="fixed bottom-8 lg:right-8 left-8 lg:left-auto p-3.5 bg-white rounded-full shadow-lg border border-slate-100 hover:bg-slate-50 hover:scale-110 transition-all active:scale-90 z-50 text-slate-400 group"
@@ -402,7 +411,6 @@ export default function Home() {
         <BookOpen className="w-6 h-6 group-hover:text-blue-500 transition-colors" />
       </button>
 
-      {/* 📓 評価ノート（モーダル） */}
       {notebook && (
         <NotebookModal 
           notebook={notebook} 
