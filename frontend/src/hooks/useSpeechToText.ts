@@ -6,22 +6,24 @@ export const useSpeechToText = (
   onSpeechStart?: () => void,
   onInterimResult?: (text: string) => void,
   isManabuSpeaking: boolean = false,
-  onError?: (error: any) => void // 💡 5つ目の引数としてエラーハンドラを拡張
+  onError?: (error: any) => void
 ) => {
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
 
-  // 💡 物理的にブラウザのマイクが「完全に動いているか」を追跡する鉄壁のフラグ
+  // 物理的にブラウザのマイクが「完全に動いているか」を追跡する鉄壁のフラグ
   const isEngineActiveRef = useRef(false);
-  // 💡 命令が衝突して壊れるのを防ぐためのトランザクションロック
+  // 命令が衝突して壊れるのを防ぐためのトランザクションロック
   const isTransitioningRef = useRef(false);
 
+  // 💡 修正ポイント①：isListening も Ref に含め、多重インスタンス生成の引き金を完全に排除
   const refs = useRef({ 
     onFinalTranscript, 
     onSpeechStart, 
     onInterimResult,
     isManabuSpeaking,
-    onError 
+    onError,
+    isListening 
   });
 
   useEffect(() => {
@@ -30,23 +32,23 @@ export const useSpeechToText = (
       onSpeechStart, 
       onInterimResult, 
       isManabuSpeaking,
-      onError 
+      onError,
+      isListening // 👈 ユーザーの最新のON/OFF意思を常に同期
     };
-  }, [onFinalTranscript, onSpeechStart, onInterimResult, isManabuSpeaking, onError]);
+  }, [onFinalTranscript, onSpeechStart, onInterimResult, isManabuSpeaking, onError, isListening]);
 
-  // 物理的なマイク起動処理（安全弁付き）
+  // 物理的なマイク起動処理
   const safeStart = useCallback(() => {
     if (!recognitionRef.current || isEngineActiveRef.current || isTransitioningRef.current) return;
     try {
       isTransitioningRef.current = true;
       recognitionRef.current.start();
     } catch (e) {
-      console.warn("⚠️ 重複スタートを物理ガードで回避しました");
       isTransitioningRef.current = false;
     }
   }, []);
 
-  // 物理的なマイク停止処理（安全弁付き）
+  // 物理的なマイク停止処理
   const safeAbort = useCallback(() => {
     if (!recognitionRef.current || isTransitioningRef.current) return;
     try {
@@ -57,7 +59,7 @@ export const useSpeechToText = (
     }
   }, []);
 
-  // 認識オブジェクトの初期化
+  // 🚀 修正の核心②：SpeechRecognition の初期化は、コンポーネント起動時の「最初の一回だけ」に完全固定！！
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return;
@@ -67,7 +69,6 @@ export const useSpeechToText = (
     recognition.continuous = true;
     recognition.interimResults = true;
 
-    // 物理的にエンジンが起動を完了した瞬間
     recognition.onstart = () => {
       isEngineActiveRef.current = true;
       isTransitioningRef.current = false;
@@ -75,7 +76,6 @@ export const useSpeechToText = (
 
     recognition.onerror = (event: any) => {
       isTransitioningRef.current = false;
-      // aborted（手動停止）以外の深刻なエラーだけを画面に通知
       if (event.error !== "aborted") {
         refs.current.onError?.(event);
       }
@@ -105,21 +105,29 @@ export const useSpeechToText = (
       if (interimTranscript) refs.current.onInterimResult?.(interimTranscript);
     };
 
-    // 物理的にエンジンが完全に停止を完了した瞬間
     recognition.onend = () => {
       isEngineActiveRef.current = false;
       isTransitioningRef.current = false;
 
-      // 🔄 ループ再開処理も、完全にエンジンが「空っぽ」になったこの安全な瞬間だけで判定する
-      if (isListening && !refs.current.isManabuSpeaking) {
-        safeStart();
+      // 💡 修正ポイント③：生のステートではなく最新の Ref を見ることで、古いマシンのゾンビ化を徹底防御
+      if (refs.current.isListening && !refs.current.isManabuSpeaking) {
+        // 🔄 ブラウザにネットワークソケット解放の「一呼吸（50ms）」の猶予を与えて美しく安全に再起動
+        setTimeout(() => {
+          if (refs.current.isListening && !refs.current.isManabuSpeaking) {
+            safeStart();
+          }
+        }, 50);
       }
     };
 
     recognitionRef.current = recognition;
-  }, [isListening, safeStart]);
 
-  // 認識の開始・停止（ユーザーがボタンを押したとき）
+    return () => {
+      recognition.abort();
+    };
+  }, [safeStart]); // 👈 🚀 依存配列から isListening を完全に消滅させました！！！
+
+  // 認識の開始・停止（ユーザー操作用）
   const toggleListening = useCallback(() => {
     if (isListening) {
       setIsListening(false);
@@ -130,7 +138,7 @@ export const useSpeechToText = (
     }
   }, [isListening, safeStart, safeAbort]);
 
-  // 🛡️ マナブ君の発言状態（裏での自動ON/OFF）と物理マイクを完全に同期
+  // マナブ君の発言状態（裏での自動ON/OFF）と物理マイクの完全同期
   useEffect(() => {
     if (isManabuSpeaking) {
       safeAbort();
