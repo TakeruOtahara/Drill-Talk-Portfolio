@@ -224,7 +224,7 @@ Drill-Talk-Portfolio/
 │   ├── app/                 # App Router (Pages, Layouts)
 │   ├── components/          # React components (ManabuAvatar, NotebookModal, etc.)
 │   ├── hooks/               # Custom Hooks (useManabu, useIdleTimeout, useSpeechToText, etc.)
-│   ├── proxy.ts             # WebSocketプロキシ＆認証ヘッダー付与 (Next.js 16仕様)
+│   ├── middleware.ts        # CSWSH対策（セキュリティ検証）＆ 認証ヘッダー付与
 │   ├── next.config.ts       # Standaloneコンテナビルド最適化設定
 │   ├── package-lock.json    # 環境再現のための依存関係ロック
 │   └── Dockerfile           # Next.js Standalone ビルド

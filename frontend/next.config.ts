@@ -6,14 +6,12 @@ const nextConfig: NextConfig = {
   output: 'standalone', 
   serverExternalPackages: ['sharp'],
   
-  // 💡 追加: 実際のWebSocket通信（Upgradeヘッダー必須）の横流しは、
-  // MiddlewareではなくNext.js本体のコア機能（Node.js環境）で行う
   async rewrites() {
     return [
       {
         source: '/ws/:path*',
-        // Azureのコンテナ環境変数 BACKEND_URL を読み込んでプロキシ
-        destination: `${process.env.BACKEND_URL}/ws/:path*`,
+        // ビルド時は 'http://localhost:8000' が使われ、Azure実行時は環境変数が上書きします
+        destination: `${process.env.BACKEND_URL || 'http://localhost:8000'}/ws/:path*`,
       },
     ];
   },
