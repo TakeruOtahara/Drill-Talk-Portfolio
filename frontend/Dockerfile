@@ -11,8 +11,8 @@ COPY package*.json ./
 RUN npm install
 COPY . .
 
-# 💡 修正ポイント：ビルド引数（ARG）を定義し、デフォルト値に「ローカル用」を設定します。
-# これにより、ローカルで普通にビルドする時は自動的に localhost:8000 になります。
+# ビルド引数（ARG）を定義し、デフォルト値に「ローカル用」を設定。
+# これにより、ローカルで普通にビルドする時は自動的に localhost:8000
 ARG BACKEND_URL=http://localhost:8000
 
 # 🛡️ Next.jsのビルドプロセス（npm run build）に引数の値を引き渡します
